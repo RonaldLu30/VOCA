@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, KeyboardEvent, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { matchesAnswer } from "@/lib/answer-matcher";
 import { VocabularyEntry } from "@/lib/domain";
 
@@ -13,17 +14,26 @@ const demoEntries: VocabularyEntry[] = [
 type Result = { answer: string; correct: boolean };
 
 export function LearningWorkspace() {
+  const router = useRouter();
   const [mode, setMode] = useState<"memory" | "test">("test");
-  const [index, setIndex] = useState(0);
+  const [index, setIndex] = useState(() => {
+    if (typeof window === "undefined") return 0;
+    return Number(window.localStorage.getItem("wordkiller-test-index") ?? 0);
+  });
   const [showDetails, setShowDetails] = useState(false);
   const [answer, setAnswer] = useState("");
   const [result, setResult] = useState<Result | null>(null);
   const [correctStreak, setCorrectStreak] = useState<Record<string, number>>({});
+  const [showLeaveDialog, setShowLeaveDialog] = useState(false);
   const current = demoEntries[index];
   const acceptedAnswers = useMemo(() => [current.phrase, ...current.synonyms], [current]);
 
   function next() {
-    setIndex((value) => (value + 1) % demoEntries.length);
+    setIndex((value) => {
+      const nextIndex = (value + 1) % demoEntries.length;
+      window.localStorage.setItem("wordkiller-test-index", String(nextIndex));
+      return nextIndex;
+    });
     setAnswer("");
     setResult(null);
     setShowDetails(false);
@@ -49,6 +59,7 @@ export function LearningWorkspace() {
       <div className="mx-auto max-w-5xl">
         <header className="mb-8 flex flex-wrap items-end justify-between gap-4">
           <div>
+            <button type="button" onClick={() => setShowLeaveDialog(true)} className="mb-4 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-600 shadow-sm hover:border-indigo-300 hover:text-indigo-700">← 返回主页</button>
             <p className="mb-2 text-sm font-semibold uppercase tracking-[0.2em] text-indigo-600">WordKiller · 今日学习</p>
             <h1 className="text-3xl font-bold tracking-tight sm:text-4xl">记住每一个词，再把它写出来</h1>
           </div>
@@ -86,6 +97,7 @@ export function LearningWorkspace() {
             {result && <div className={`mt-6 rounded-2xl p-5 ${result.correct ? "bg-emerald-50 text-emerald-900" : "bg-rose-50 text-rose-900"}`}><p className="text-lg font-bold">{result.correct ? "回答正确" : "再记一次"}</p><p className="mt-2 text-sm">你的答案：{result.answer}</p><p className="text-sm">正确答案：{current.phrase}</p><p className="mt-2 text-xs">连续答对：{correctStreak[current.id] ?? 0} 次（达到 3 次后标记为已掌握）</p><button type="button" onClick={next} className="mt-4 rounded-xl bg-white px-4 py-2 text-sm font-semibold shadow-sm">下一题</button></div>}
           </section>
         )}
+        {showLeaveDialog && <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/35 px-5"><div role="dialog" aria-modal="true" className="w-full max-w-md rounded-3xl bg-white p-7 shadow-2xl"><h2 className="text-xl font-bold text-slate-900">确认离开测试？</h2><p className="mt-3 leading-7 text-slate-600">还有 <strong className="text-indigo-600">{Math.max(demoEntries.length - index - (result ? 1 : 0), 0)}</strong> 个单词就完成任务了，确认离开吗？</p><p className="mt-2 text-sm text-slate-400">如果离开再回来，当前进度也不会改变。</p><div className="mt-6 flex gap-3"><button type="button" onClick={() => setShowLeaveDialog(false)} className="flex-1 rounded-xl border border-slate-200 px-4 py-3 text-sm font-semibold text-slate-600">继续测试</button><button type="button" onClick={() => router.push("/")} className="flex-1 rounded-xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white">确认离开</button></div></div></div>}
       </div>
     </main>
   );
