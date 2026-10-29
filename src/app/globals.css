@@ -68,6 +68,7 @@ body {
 .review-header { display: flex; justify-content: space-between; gap: 2rem; align-items: flex-start; margin-bottom: 2rem; }
 .review-eyebrow { margin: 0 0 .7rem; color: #4f46e5; font-size: .72rem; font-weight: 800; letter-spacing: .18em; }
 .review-header h1 { margin: 0; font-size: clamp(2rem, 5vw, 3.6rem); letter-spacing: -.05em; }
+.review-home-link { display: inline-block; margin-bottom: 1rem; color: #4f46e5; font-size: .9rem; font-weight: 700; }
 .review-header p:not(.review-eyebrow) { max-width: 36rem; margin: 1rem 0 0; color: #64748b; line-height: 1.6; }
 .review-streak { min-width: 9rem; padding: 1rem 1.25rem; border: 1px solid #c7d2fe; border-radius: 1.25rem; color: #3730a3; background: #eef2ff; text-align: center; }
 .review-streak strong, .review-streak span { display: block; }
