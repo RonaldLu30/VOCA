@@ -1,9 +1,13 @@
 "use client";
 
-import { FormEvent, KeyboardEvent, useMemo, useState } from "react";
+import { FormEvent, KeyboardEvent, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { matchesAnswer } from "@/lib/answer-matcher";
 import { VocabularyEntry } from "@/lib/domain";
+import { createClient } from "@/lib/supabase/client";
+
+const supabase = createClient();
 
 const demoEntries: VocabularyEntry[] = [
   { id: "abandon", phrase: "abandon", meanings: ["放弃", "遗弃"], phonetic: "/əˈbændən/", partOfSpeech: "verb", synonyms: ["give up", "desert"], antonyms: ["keep"], example: "He abandoned his plan.", memoryTip: "把 a band（一个乐队）丢下，联想为放弃。" },
@@ -16,43 +20,82 @@ type Result = { answer: string; correct: boolean };
 export function LearningWorkspace() {
   const router = useRouter();
   const [mode, setMode] = useState<"memory" | "test">("test");
-  const [index, setIndex] = useState(() => {
-    if (typeof window === "undefined") return 0;
-    return Number(window.localStorage.getItem("wordkiller-test-index") ?? 0);
-  });
+  const [index, setIndex] = useState(0);
+  const [userId, setUserId] = useState<string | null>(null);
+  const [cloudEntries, setCloudEntries] = useState<VocabularyEntry[]>([]);
+  const [loaded, setLoaded] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [showDetails, setShowDetails] = useState(false);
   const [answer, setAnswer] = useState("");
   const [result, setResult] = useState<Result | null>(null);
   const [correctStreak, setCorrectStreak] = useState<Record<string, number>>({});
   const [showLeaveDialog, setShowLeaveDialog] = useState(false);
-  const current = demoEntries[index];
-  const acceptedAnswers = useMemo(() => [current.phrase, ...current.synonyms], [current]);
+  const entries = userId ? cloudEntries : demoEntries;
+  const current = entries[index];
+  const acceptedAnswers = useMemo(() => current ? [current.phrase, ...current.synonyms] : [], [current]);
+
+  useEffect(() => {
+    let active = true;
+    async function loadWords() {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!active) return;
+      if (user) {
+        setUserId(user.id);
+        const [words, answers] = await Promise.all([
+          supabase.from("vocabulary_entries")
+            .select("id, term, meaning, phonetic, part_of_speech, synonyms, example, memory_tip")
+            .eq("user_id", user.id).order("created_at", { ascending: false }),
+          supabase.from("study_records")
+            .select("vocabulary_id, consecutive_correct")
+            .eq("user_id", user.id).order("answered_at", { ascending: true }),
+        ]);
+        if (active) setCloudEntries((words.data ?? []).map((entry) => ({
+          id: entry.id, phrase: entry.term, meanings: entry.meaning.split(/[；;、]/).map((value: string) => value.trim()).filter(Boolean),
+          phonetic: entry.phonetic ?? undefined, partOfSpeech: entry.part_of_speech ?? undefined,
+          synonyms: entry.synonyms ?? [], antonyms: [], example: entry.example ?? undefined, memoryTip: entry.memory_tip ?? undefined,
+        })));
+        if (active) setCorrectStreak(Object.fromEntries((answers.data ?? []).map((record) => [record.vocabulary_id, record.consecutive_correct])));
+      }
+      if (active) setLoaded(true);
+    }
+    void loadWords();
+    return () => { active = false; };
+  }, []);
 
   function next() {
     setIndex((value) => {
-      const nextIndex = (value + 1) % demoEntries.length;
-      window.localStorage.setItem("wordkiller-test-index", String(nextIndex));
-      return nextIndex;
+      return (value + 1) % entries.length;
     });
     setAnswer("");
     setResult(null);
     setShowDetails(false);
   }
 
-  function submit(event?: FormEvent) {
+  async function submit(event?: FormEvent) {
     event?.preventDefault();
     if (!answer.trim() || result) return;
     const correct = matchesAnswer(answer, acceptedAnswers);
     setResult({ answer, correct });
     setCorrectStreak((previous) => ({ ...previous, [current.id]: correct ? (previous[current.id] ?? 0) + 1 : 0 }));
+    if (userId) {
+      const consecutiveCorrect = correct ? (correctStreak[current.id] ?? 0) + 1 : 0;
+      const { error } = await supabase.from("study_records").insert({
+        user_id: userId, vocabulary_id: current.id, answer, correct, consecutive_correct: consecutiveCorrect,
+        status: consecutiveCorrect >= 3 ? "mastered" : "learning",
+      });
+      if (error) setSaveError(error.message);
+    }
   }
 
   function handleKeyDown(event: KeyboardEvent<HTMLInputElement>) {
     if (event.key === "Enter" && event.shiftKey) {
       event.preventDefault();
-      submit();
+      void submit();
     }
   }
+
+  if (!loaded) return <main className="p-8">正在加载词汇…</main>;
+  if (userId && !entries.length) return <main className="p-8"><p>词库还是空的，请先导入词汇。</p><Link href="/" className="text-indigo-600">返回主页</Link></main>;
 
   return (
     <main className="min-h-screen bg-[#f7f8fc] px-5 py-8 text-slate-900 sm:px-10 lg:px-16">
@@ -65,7 +108,7 @@ export function LearningWorkspace() {
           </div>
           <div className="rounded-2xl border border-indigo-100 bg-white px-4 py-3 text-right shadow-sm">
             <p className="text-xs text-slate-400">今日进度</p>
-            <p className="text-2xl font-bold text-indigo-600">{index + (result ? 1 : 0)} / {demoEntries.length}</p>
+            <p className="text-2xl font-bold text-indigo-600">{index + (result ? 1 : 0)} / {entries.length}</p>
           </div>
         </header>
         {mode === "memory" ? (
@@ -90,14 +133,15 @@ export function LearningWorkspace() {
             <div className="mb-8 flex items-center justify-between"><span className="text-sm font-semibold text-slate-400">第 {index + 1} 题</span><span className="rounded-full bg-rose-50 px-3 py-1 text-xs font-semibold text-rose-700">中文提示</span></div>
             <p className="text-3xl font-bold tracking-tight sm:text-5xl">{current.meanings.join("；")}</p>
             <p className="mt-3 text-sm text-slate-400">输入英文单词或短语，按 Shift + Enter 提交</p>
-            <form onSubmit={submit} className="mt-8">
+            <form onSubmit={(event) => { void submit(event); }} className="mt-8">
               <input autoFocus value={answer} onChange={(event) => setAnswer(event.target.value)} onKeyDown={handleKeyDown} disabled={Boolean(result)} placeholder="输入英文答案" className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-5 py-4 text-xl outline-none transition focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100 disabled:opacity-70" />
               <button type="submit" disabled={!answer.trim() || Boolean(result)} className="mt-4 w-full rounded-xl bg-indigo-600 px-5 py-3 font-semibold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-slate-200">确认答案</button>
             </form>
             {result && <div className={`mt-6 rounded-2xl p-5 ${result.correct ? "bg-emerald-50 text-emerald-900" : "bg-rose-50 text-rose-900"}`}><p className="text-lg font-bold">{result.correct ? "回答正确" : "再记一次"}</p><p className="mt-2 text-sm">你的答案：{result.answer}</p><p className="text-sm">正确答案：{current.phrase}</p><p className="mt-2 text-xs">连续答对：{correctStreak[current.id] ?? 0} 次（达到 3 次后标记为已掌握）</p><button type="button" onClick={next} className="mt-4 rounded-xl bg-white px-4 py-2 text-sm font-semibold shadow-sm">下一题</button></div>}
+            {saveError && <p role="status" className="mt-3 text-sm text-rose-600">记录保存失败：{saveError}</p>}
           </section>
         )}
-        {showLeaveDialog && <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/35 px-5"><div role="dialog" aria-modal="true" className="w-full max-w-md rounded-3xl bg-white p-7 shadow-2xl"><h2 className="text-xl font-bold text-slate-900">确认离开测试？</h2><p className="mt-3 leading-7 text-slate-600">还有 <strong className="text-indigo-600">{Math.max(demoEntries.length - index - (result ? 1 : 0), 0)}</strong> 个单词就完成任务了，确认离开吗？</p><p className="mt-2 text-sm text-slate-400">如果离开再回来，当前进度也不会改变。</p><div className="mt-6 flex gap-3"><button type="button" onClick={() => setShowLeaveDialog(false)} className="flex-1 rounded-xl border border-slate-200 px-4 py-3 text-sm font-semibold text-slate-600">继续测试</button><button type="button" onClick={() => router.push("/")} className="flex-1 rounded-xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white">确认离开</button></div></div></div>}
+        {showLeaveDialog && <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/35 px-5"><div role="dialog" aria-modal="true" className="w-full max-w-md rounded-3xl bg-white p-7 shadow-2xl"><h2 className="text-xl font-bold text-slate-900">确认离开测试？</h2><p className="mt-3 leading-7 text-slate-600">还有 <strong className="text-indigo-600">{Math.max(entries.length - index - (result ? 1 : 0), 0)}</strong> 个单词就完成任务了，确认离开吗？</p><p className="mt-2 text-sm text-slate-400">如果离开再回来，当前进度也不会改变。</p><div className="mt-6 flex gap-3"><button type="button" onClick={() => setShowLeaveDialog(false)} className="flex-1 rounded-xl border border-slate-200 px-4 py-3 text-sm font-semibold text-slate-600">继续测试</button><button type="button" onClick={() => router.push("/")} className="flex-1 rounded-xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white">确认离开</button></div></div></div>}
       </div>
     </main>
   );

@@ -59,3 +59,24 @@ create policy "lists own data" on public.vocabulary_lists for all using (auth.ui
 create policy "entries own data" on public.vocabulary_entries for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 create policy "records own data" on public.study_records for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 create policy "days own data" on public.study_days for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+create or replace function public.create_profile_for_new_user()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  insert into public.profiles (id, username, phone)
+  values (
+    new.id,
+    coalesce(new.raw_user_meta_data ->> 'username', split_part(new.email, '@', 1) || '_' || left(new.id::text, 8)),
+    nullif(new.raw_user_meta_data ->> 'phone', '')
+  );
+  return new;
+end;
+$$;
+
+create trigger on_auth_user_created
+after insert on auth.users
+for each row execute function public.create_profile_for_new_user();

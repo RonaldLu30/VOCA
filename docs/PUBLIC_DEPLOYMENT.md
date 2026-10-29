@@ -11,7 +11,7 @@
 
 1. 在 Supabase 创建项目，打开 SQL Editor，执行 `supabase/schema.sql`。
 2. 在 Supabase Authentication 中开启 Email 登录；手机号作为资料字段保存。若以后需要短信验证，再开启 Phone Provider。
-3. 在 Vercel 导入 `RonaldLu30/wordkiller`，Production Branch 选择 `main`。
+3. 在 Vercel 连接 `RonaldLu30/VOCA`，Production Branch 选择 `main`。
 4. 在 Vercel Environment Variables 填入 `.env.example` 中的变量。`SUPABASE_SERVICE_ROLE_KEY` 只允许服务端使用，不能写入 `NEXT_PUBLIC_*`。
 5. 部署后配置 Supabase Authentication 的 Site URL 为 Vercel 域名，并加入回调地址。
 
@@ -26,10 +26,9 @@
 - Supabase 自动备份数据库；重要版本可定期导出 SQL。
 - 生产环境使用 HTTPS、限制上传文件大小，并对 PDF、Excel、Word 解析设置超时。
 
-## 当前代码迁移顺序
+## 当前实现
 
-1. 接入 Supabase SSR 客户端。
-2. 将注册/登录页替换为 Supabase Auth。
-3. 将首页词汇导入写入 `vocabulary_lists` 与 `vocabulary_entries`。
-4. 将测试记录、错题和能量写入 `study_records` 与 `study_days`。
-5. 在 Vercel Preview 环境验收后切换 Production 域名。
+- 邮箱注册、登录、找回密码使用 Supabase Auth；注册时由数据库触发器创建 `profiles` 记录。
+- TXT、CSV 和粘贴内容写入云端词表；测试记录、错题、打卡和能量读取云端数据。
+- PDF、Excel、Word 文档解析仍未接入；这些格式不会被当作成功导入。
+- 首次部署后，将 Vercel 域名加入 Supabase Authentication 的 Site URL 与 Redirect URLs，再验证邮箱注册和找回密码。

@@ -1,14 +1,7 @@
 export type AuthMode = "login" | "register";
 
 export type UserIdentity = {
+  id: string;
   username: string;
-  phone: string;
+  phone: string | null;
 };
-
-export type StoredAccount = UserIdentity & {
-  password: string;
-  createdAt: string;
-};
-
-export const AUTH_STORAGE_KEY = "wordkiller.auth.account";
-export const SESSION_STORAGE_KEY = "wordkiller.auth.session";
