@@ -13,7 +13,7 @@ const demoEntries: VocabularyEntry[] = [
 type Result = { answer: string; correct: boolean };
 
 export function LearningWorkspace() {
-  const [mode, setMode] = useState<"memory" | "test">("memory");
+  const [mode, setMode] = useState<"memory" | "test">("test");
   const [index, setIndex] = useState(0);
   const [showDetails, setShowDetails] = useState(false);
   const [answer, setAnswer] = useState("");
@@ -57,10 +57,6 @@ export function LearningWorkspace() {
             <p className="text-2xl font-bold text-indigo-600">{index + (result ? 1 : 0)} / {demoEntries.length}</p>
           </div>
         </header>
-        <div className="mb-6 flex gap-2 rounded-2xl bg-slate-200/70 p-1">
-          <button type="button" onClick={() => { setMode("memory"); setResult(null); }} className={`flex-1 rounded-xl px-4 py-3 text-sm font-semibold transition ${mode === "memory" ? "bg-white text-indigo-700 shadow-sm" : "text-slate-500"}`}>记忆模式</button>
-          <button type="button" onClick={() => { setMode("test"); setResult(null); }} className={`flex-1 rounded-xl px-4 py-3 text-sm font-semibold transition ${mode === "test" ? "bg-white text-indigo-700 shadow-sm" : "text-slate-500"}`}>测试模式</button>
-        </div>
         {mode === "memory" ? (
           <section className="rounded-3xl border border-slate-200 bg-white p-7 shadow-sm sm:p-10">
             <div className="mb-8 flex items-center justify-between gap-4">
