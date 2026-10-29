@@ -84,7 +84,7 @@ export function AuthPanel() {
   if (session) {
     return (
       <section className="auth-card">
-        <p className="eyebrow">WORDKILLER ACCOUNT</p>
+        <p className="eyebrow">VOCA！ACCOUNT</p>
         <h1>欢迎回来，{session.username}</h1>
         <p className="auth-muted">账号已在此设备保持登录。连接云端后，学习进度也会在设备间同步。</p>
         <button className="auth-primary" type="button" onClick={logout}>退出登录</button>
@@ -95,7 +95,7 @@ export function AuthPanel() {
 
   return (
     <section className="auth-card">
-      <p className="eyebrow">WORDKILLER ACCOUNT</p>
+      <p className="eyebrow">VOCA！ACCOUNT</p>
       <h1>{mode === "login" ? "继续你的单词计划" : "创建学习账号"}</h1>
       <p className="auth-muted">用户名和手机号共同作为账号身份，不需要短信验证码。</p>
       <div className="auth-tabs" role="tablist" aria-label="账号操作">

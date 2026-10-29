@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "WordKiller | 导入词汇",
+  title: "voca！记住了！",
   description: "导入、确认并开始学习今日词汇",
 };
 
