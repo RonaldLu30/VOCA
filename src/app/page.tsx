@@ -1,100 +1,35 @@
 "use client";
 
-import { ChangeEvent, useMemo, useState } from "react";
+import { ChangeEvent, KeyboardEvent, useMemo, useState } from "react";
 import { parseVocabularyCsv, parseVocabularyText, VocabularyEntry } from "@/lib/vocabulary-parser";
 
-const example = "abandon\t放弃；遗弃\naccurate - 准确的\ntake advantage of, 利用\n# 支持用注释标记忽略一行";
+const example = "abandon\t放弃；遗弃\naccurate - 准确的\ntake advantage of, 利用";
+const normalize = (value: string) => value.toLocaleLowerCase().replace(/[.,!?;:'\"，。！？；：‘’“”()\[\]{}]/g, "").replace(/\s+/g, " ").trim();
 
 export default function Home() {
   const [source, setSource] = useState(example);
   const [entries, setEntries] = useState<VocabularyEntry[]>(() => parseVocabularyText(example));
   const [message, setMessage] = useState("已解析 3 个词条");
+  const [view, setView] = useState<"import" | "library" | "test">("import");
+  const [testIndex, setTestIndex] = useState(0);
+  const [answer, setAnswer] = useState("");
+  const [testResult, setTestResult] = useState<boolean | null>(null);
   const parsedPreview = useMemo(() => parseVocabularyText(source), [source]);
+  const current = entries[testIndex % Math.max(entries.length, 1)];
 
-  function refreshPreview() {
-    const nextEntries = parseVocabularyText(source);
-    setEntries(nextEntries);
-    setMessage(nextEntries.length ? "已解析 " + nextEntries.length + " 个词条" : "暂未识别到有效词条");
-  }
+  function refreshPreview() { const next = parseVocabularyText(source); setEntries(next); setTestIndex(0); setMessage(next.length ? `已解析 ${next.length} 个词条` : "暂未识别到有效词条"); }
+  function updateEntry(id: string, field: "term" | "meaning", value: string) { setEntries((items) => items.map((entry) => entry.id === id ? { ...entry, [field]: value } : entry)); }
+  function handleFile(event: ChangeEvent<HTMLInputElement>) { const file = event.target.files?.[0]; if (!file) return; const isText = file.name.endsWith(".txt") || file.name.endsWith(".csv"); if (!isText) { setMessage("当前支持 TXT 和 CSV；Excel、Word 接口已预留"); return; } const reader = new FileReader(); reader.onload = () => { const value = String(reader.result ?? ""); setSource(value); const next = file.name.endsWith(".csv") ? parseVocabularyCsv(value) : parseVocabularyText(value); setEntries(next); setMessage(`已从 ${file.name} 解析 ${next.length} 个词条`); }; reader.readAsText(file); }
+  function submitTest() { if (!current || !answer.trim() || testResult !== null) return; setTestResult(normalize(answer) === normalize(current.term)); }
+  function onAnswerKey(event: KeyboardEvent<HTMLInputElement>) { if (event.key === "Enter" && event.shiftKey) { event.preventDefault(); submitTest(); } }
+  function nextTest() { setTestIndex((value) => (value + 1) % entries.length); setAnswer(""); setTestResult(null); }
 
-  function updateEntry(id: string, field: "term" | "meaning", value: string) {
-    setEntries((current) => current.map((entry) => (entry.id === id ? { ...entry, [field]: value } : entry)));
-  }
-
-  function handleFile(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    if (!file) return;
-    const isText = file.name.endsWith(".txt") || file.name.endsWith(".csv");
-    if (!isText) {
-      setMessage("当前支持 TXT 和 CSV；Excel、Word 将在后续版本接入");
-      return;
-    }
-    const reader = new FileReader();
-    reader.onload = () => {
-      const value = String(reader.result ?? "");
-      setSource(value);
-      const nextEntries = file.name.endsWith(".csv") ? parseVocabularyCsv(value) : parseVocabularyText(value);
-      setEntries(nextEntries);
-      setMessage("已从 " + file.name + " 解析 " + nextEntries.length + " 个词条");
-    };
-    reader.readAsText(file);
-  }
-
-  return (
-    <main className="min-h-screen bg-[#f7f8fc] px-5 py-8 text-slate-900 sm:px-10 lg:px-16">
-      <div className="mx-auto max-w-6xl">
-        <header className="mb-8 flex flex-wrap items-end justify-between gap-4">
-          <div>
-            <p className="mb-2 text-sm font-semibold uppercase tracking-[0.2em] text-indigo-600">WordKiller</p>
-            <h1 className="text-3xl font-bold tracking-tight sm:text-4xl">导入今日词汇</h1>
-            <p className="mt-3 max-w-2xl text-slate-500">粘贴或上传词汇表，确认后进入记忆模式。每行一个词条，英文和中文之间使用空格、Tab、逗号或短横线分隔。</p>
-          </div>
-          <div className="rounded-2xl border border-indigo-100 bg-white px-4 py-3 text-right shadow-sm">
-            <p className="text-xs text-slate-400">今日词汇</p>
-            <p className="text-2xl font-bold text-indigo-600">{entries.length}</p>
-          </div>
-        </header>
-        <section className="grid gap-6 lg:grid-cols-[0.9fr_1.1fr]">
-          <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-            <div className="mb-4 flex items-center justify-between">
-              <div>
-                <h2 className="text-lg font-semibold">粘贴词汇</h2>
-                <p className="mt-1 text-sm text-slate-400">支持英文单词、短语和完整中文释义</p>
-              </div>
-              <label className="cursor-pointer rounded-xl border border-indigo-200 px-3 py-2 text-sm font-medium text-indigo-600 transition hover:bg-indigo-50">
-                上传文件
-                <input className="hidden" type="file" accept=".txt,.csv,.xlsx,.docx" onChange={handleFile} />
-              </label>
-            </div>
-            <textarea value={source} onChange={(event) => setSource(event.target.value)} className="min-h-80 w-full resize-y rounded-2xl border border-slate-200 bg-slate-50 p-4 font-mono text-sm leading-7 outline-none transition focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100" aria-label="词汇内容" />
-            <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-              <p className="text-sm text-slate-500">{message}</p>
-              <button type="button" onClick={refreshPreview} className="rounded-xl bg-indigo-600 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-indigo-700">重新解析</button>
-            </div>
-          </div>
-          <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-            <div className="mb-5 flex items-center justify-between">
-              <div>
-                <h2 className="text-lg font-semibold">确认词条</h2>
-                <p className="mt-1 text-sm text-slate-400">可在保存前修改识别结果</p>
-              </div>
-              <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">待确认</span>
-            </div>
-            <div className="space-y-3">
-              {entries.length ? entries.map((entry, index) => (
-                <div key={entry.id} className="grid gap-3 rounded-2xl border border-slate-100 bg-slate-50 p-3 sm:grid-cols-[auto_1fr_1.35fr] sm:items-center">
-                  <span className="text-xs font-semibold text-slate-400">{String(index + 1).padStart(2, "0")}</span>
-                  <input value={entry.term} onChange={(event) => updateEntry(entry.id, "term", event.target.value)} className="rounded-xl border border-slate-200 bg-white px-3 py-2 font-medium outline-none focus:border-indigo-400" aria-label={"第 " + (index + 1) + " 个英文"} />
-                  <input value={entry.meaning} onChange={(event) => updateEntry(entry.id, "meaning", event.target.value)} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-slate-600 outline-none focus:border-indigo-400" aria-label={"第 " + (index + 1) + " 个中文释义"} />
-                </div>
-              )) : <div className="rounded-2xl border border-dashed border-slate-300 p-10 text-center text-sm text-slate-400">解析后将在这里显示词条</div>}
-            </div>
-            <button type="button" disabled={!entries.length} className="mt-6 w-full rounded-xl bg-slate-900 px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-200">确认并进入记忆模式</button>
-            <p className="mt-3 text-center text-xs text-slate-400">保存后系统将自动补充音标、例句和记忆方法</p>
-          </div>
-        </section>
-        <p className="mt-6 text-center text-xs text-slate-400">预览 {parsedPreview.length} 条 · 后续支持 Excel、Word 和词典接口</p>
-      </div>
-    </main>
-  );
+  return <main className="min-h-screen bg-[#f7f8fc] px-5 py-6 text-slate-900 sm:px-10 lg:px-16"><div className="mx-auto max-w-7xl">
+    <header className="mb-6 flex flex-wrap items-center justify-between gap-4"><div><p className="mb-1 text-sm font-semibold uppercase tracking-[0.2em] text-indigo-600">WordKiller</p><h1 className="text-3xl font-bold tracking-tight sm:text-4xl">今日学习工作台</h1><p className="mt-2 text-slate-500">导入、管理、记忆和测试都在一个页面完成。</p></div><div className="flex items-center gap-3"><a href="/auth" className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:border-indigo-300">登录 / 注册</a><div className="rounded-2xl border border-indigo-100 bg-white px-4 py-2 text-right shadow-sm"><p className="text-xs text-slate-400">今日词汇</p><p className="text-2xl font-bold text-indigo-600">{entries.length}</p></div></div></header>
+    <nav className="mb-5 flex flex-wrap gap-2 rounded-2xl bg-white p-2 shadow-sm ring-1 ring-slate-200">{([["import", "导入词汇"], ["library", "单词库"], ["test", "开始测试"]] as const).map(([key, label]) => <button key={key} type="button" onClick={() => setView(key)} className={`rounded-xl px-4 py-2 text-sm font-semibold ${view === key ? "bg-indigo-600 text-white" : "text-slate-500 hover:bg-slate-50"}`}>{label}</button>)}<a href="/learn" className="rounded-xl px-4 py-2 text-sm font-semibold text-slate-500 hover:bg-slate-50">记忆模式</a><a href="/review" className="rounded-xl px-4 py-2 text-sm font-semibold text-slate-500 hover:bg-slate-50">错题与打卡</a></nav>
+    {view === "import" && <section className="grid gap-5 lg:grid-cols-[0.7fr_1.3fr]"><div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm"><div className="mb-3 flex items-center justify-between"><div><h2 className="text-lg font-semibold">快速导入</h2><p className="mt-1 text-sm text-slate-400">粘贴词汇或选择文件</p></div><label className="cursor-pointer rounded-xl border border-indigo-200 px-3 py-2 text-sm font-medium text-indigo-600 hover:bg-indigo-50">上传文件<input className="hidden" type="file" accept=".txt,.csv,.xlsx,.docx" onChange={handleFile} /></label></div><textarea value={source} onChange={(event) => setSource(event.target.value)} className="min-h-44 w-full resize-y rounded-2xl border border-slate-200 bg-slate-50 p-4 font-mono text-sm leading-7 outline-none focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100" aria-label="词汇内容" /><div className="mt-3 flex items-center justify-between gap-3"><p className="text-sm text-slate-500">{message}</p><button type="button" onClick={refreshPreview} className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700">解析</button></div></div><div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm"><div className="mb-4 flex items-center justify-between"><div><h2 className="text-lg font-semibold">确认词条</h2><p className="mt-1 text-sm text-slate-400">保存前可直接修改，词典接口会补充音标和例句</p></div><span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">{entries.length} 条</span></div><div className="space-y-2">{entries.map((entry, index) => <div key={entry.id} className="grid gap-2 rounded-2xl border border-slate-100 bg-slate-50 p-2 sm:grid-cols-[2rem_1fr_1.4fr] sm:items-center"><span className="text-center text-xs font-semibold text-slate-400">{String(index + 1).padStart(2, "0")}</span><input value={entry.term} onChange={(event) => updateEntry(entry.id, "term", event.target.value)} className="rounded-xl border border-slate-200 bg-white px-3 py-2 font-medium outline-none focus:border-indigo-400" aria-label={`第 ${index + 1} 个英文`} /><input value={entry.meaning} onChange={(event) => updateEntry(entry.id, "meaning", event.target.value)} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-slate-600 outline-none focus:border-indigo-400" aria-label={`第 ${index + 1} 个中文释义`} /></div>)}</div><button type="button" onClick={() => setView("test")} disabled={!entries.length} className="mt-4 w-full rounded-xl bg-slate-900 px-5 py-3 text-sm font-semibold text-white hover:bg-slate-800 disabled:bg-slate-200">确认词汇并开始学习</button></div></section>}
+    {view === "library" && <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm"><div className="mb-5 flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-xl font-semibold">我的单词库</h2><p className="mt-1 text-sm text-slate-400">点击单元格即可编辑，修改会保留在当前学习会话。</p></div><button type="button" onClick={() => setView("import")} className="rounded-xl border border-indigo-200 px-4 py-2 text-sm font-semibold text-indigo-600">继续导入</button></div><div className="overflow-x-auto"><table className="w-full min-w-[620px] border-separate border-spacing-y-2 text-left text-sm"><thead><tr className="text-xs uppercase tracking-wider text-slate-400"><th className="px-3">#</th><th className="px-3">英文 / 短语</th><th className="px-3">中文释义</th><th className="px-3">操作</th></tr></thead><tbody>{entries.map((entry, index) => <tr key={entry.id} className="bg-slate-50"><td className="rounded-l-xl px-3 text-slate-400">{index + 1}</td><td className="px-3"><input value={entry.term} onChange={(event) => updateEntry(entry.id, "term", event.target.value)} className="w-full rounded-lg border border-transparent bg-transparent px-2 py-2 font-medium outline-none focus:border-indigo-300 focus:bg-white" /></td><td className="px-3"><input value={entry.meaning} onChange={(event) => updateEntry(entry.id, "meaning", event.target.value)} className="w-full rounded-lg border border-transparent bg-transparent px-2 py-2 text-slate-600 outline-none focus:border-indigo-300 focus:bg-white" /></td><td className="rounded-r-xl px-3"><button type="button" onClick={() => { setTestIndex(index); setView("test"); }} className="text-sm font-semibold text-indigo-600">测试</button></td></tr>)}</tbody></table></div></section>}
+    {view === "test" && <section className="mx-auto max-w-3xl rounded-3xl border border-slate-200 bg-white p-7 shadow-sm sm:p-10"><div className="mb-7 flex items-center justify-between"><div><p className="text-xs font-semibold uppercase tracking-wider text-indigo-600">快速测试</p><h2 className="mt-1 text-2xl font-bold">根据中文写出英文</h2></div><span className="rounded-full bg-indigo-50 px-3 py-1 text-xs font-semibold text-indigo-700">{entries.length ? `${testIndex + 1} / ${entries.length}` : "0 / 0"}</span></div>{current ? <><p className="text-3xl font-bold sm:text-5xl">{current.meaning}</p><p className="mt-3 text-sm text-slate-400">输入英文后按 Shift + Enter，或点击确认。</p><input autoFocus value={answer} onChange={(event) => setAnswer(event.target.value)} onKeyDown={onAnswerKey} disabled={testResult !== null} placeholder="输入英文答案" className="mt-8 w-full rounded-2xl border border-slate-200 bg-slate-50 px-5 py-4 text-xl outline-none focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100 disabled:opacity-70" /><button type="button" onClick={submitTest} disabled={!answer.trim() || testResult !== null} className="mt-4 w-full rounded-xl bg-indigo-600 px-5 py-3 font-semibold text-white hover:bg-indigo-700 disabled:bg-slate-200">确认答案</button>{testResult !== null && <div className={`mt-5 rounded-2xl p-5 ${testResult ? "bg-emerald-50 text-emerald-900" : "bg-rose-50 text-rose-900"}`}><p className="text-lg font-bold">{testResult ? "回答正确" : "再记一次"}</p><p className="mt-2 text-sm">正确答案：{current.term}</p><button type="button" onClick={nextTest} className="mt-4 rounded-xl bg-white px-4 py-2 text-sm font-semibold shadow-sm">下一题</button></div>}</> : <p className="text-slate-500">请先导入词汇。</p>}</section>}
+    <p className="mt-5 text-center text-xs text-slate-400">预览 {parsedPreview.length} 条 · 词典接口：/api/dictionary/[term]</p>
+  </div></main>;
 }
