@@ -61,6 +61,7 @@ export function AuthPanel() {
       window.localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(newAccount));
       setSession(newAccount);
       setMessage("注册成功，当前设备已保持登录。");
+      window.location.href = "/";
       return;
     }
 
@@ -71,6 +72,7 @@ export function AuthPanel() {
     window.localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(account));
     setSession(account);
     setMessage("登录成功，当前设备已保持登录。");
+    window.location.href = "/";
   }
 
   function logout() {
