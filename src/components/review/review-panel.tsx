@@ -28,7 +28,7 @@ export function ReviewPanel() {
     <section className="review-shell">
       <header className="review-header">
         <div>
-          <Link href="/" className="review-home-link">← 返回主页</Link>
+          <Link href="/" className="home-return-button">← 返回主页</Link>
           <p className="review-eyebrow">REVIEW CENTER</p>
           <h1>错题回顾与打卡</h1>
           <p>测试开始前优先复习错题，连续三次答对后自动标记为已掌握。</p>

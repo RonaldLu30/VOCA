@@ -59,7 +59,7 @@ export function LearningWorkspace() {
       <div className="mx-auto max-w-5xl">
         <header className="mb-8 flex flex-wrap items-end justify-between gap-4">
           <div>
-            <button type="button" onClick={() => setShowLeaveDialog(true)} className="mb-4 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-600 shadow-sm hover:border-indigo-300 hover:text-indigo-700">← 返回主页</button>
+            <button type="button" onClick={() => setShowLeaveDialog(true)} className="home-return-button mb-4">← 返回主页</button>
             <p className="mb-2 text-sm font-semibold uppercase tracking-[0.2em] text-indigo-600">VOCA！· 今日学习</p>
             <h1 className="text-3xl font-bold tracking-tight sm:text-4xl">记住每一个词，再把它写出来</h1>
           </div>
