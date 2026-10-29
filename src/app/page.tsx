@@ -11,7 +11,7 @@ export default function Home() {
   const [source, setSource] = useState(sample); const [view, setView] = useState<"home"|"library"|"today">("home");
   const [user] = useState<{username:string}|null>(() => { if (typeof window === "undefined") return null; const raw = localStorage.getItem(SESSION_STORAGE_KEY); return raw ? JSON.parse(raw) as {username:string} : null; }); const [status, setStatus] = useState("支持 PDF、Excel、Word、TXT、CSV");
   const [energy] = useState(() => typeof window === "undefined" ? 0 : Number(localStorage.getItem("voca-energy") ?? 0));
-  const level = Math.floor(energy / 100) + 1;
+  const level = Math.floor(energy / 100);
   const levelProgress = energy % 100;
   const update = (id:string, field:"term"|"meaning", value:string) => setEntries(items => items.map(item => item.id === id ? {...item,[field]:value} : item));
   const parse = (value:string, name="") => { const next = name.toLowerCase().endsWith(".csv") ? parseVocabularyCsv(value) : parseVocabularyText(value); setEntries(next); setSource(value); setStatus(`已导入 ${next.length} 个单词`); };
