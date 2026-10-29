@@ -24,7 +24,7 @@ export function parseVocabularyText(input: string): VocabularyEntry[] {
     .map((line) => line.trim())
     .filter((line) => line && !line.startsWith("#") && !line.startsWith("//"))
     .forEach((line) => {
-      const match = line.match(separators);
+      const match = line.match(separators) ?? line.match(/\s+(?=[\u3400-\u9fff])/);
       if (!match || match.index === undefined) return;
 
       const term = line.slice(0, match.index).trim();

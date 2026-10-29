@@ -4,10 +4,25 @@ import { ChangeEvent, DragEvent, useEffect, useState } from "react";
 import Link from "next/link";
 import { VocaPet } from "@/components/voca-pet";
 import { parseVocabularyCsv, parseVocabularyText, VocabularyEntry } from "@/lib/vocabulary-parser";
+import { extractPdfText } from "@/lib/pdf-vocabulary";
 import { createClient } from "@/lib/supabase/client";
 
 const supabase = createClient();
 const sample = "abandon\t放弃；遗弃\naccurate\t准确的\ntake advantage of\t利用";
+const pendingImportKey = "voca.pendingImport";
+
+async function saveWords(userId: string, parsed: VocabularyEntry[]) {
+  const { data: list, error: listError } = await supabase.from("vocabulary_lists").insert({ user_id: userId }).select("id").single();
+  if (listError || !list) return { data: [] as VocabularyEntry[], error: listError?.message ?? "创建词表失败" };
+  const { data, error } = await supabase.from("vocabulary_entries")
+    .insert(parsed.map((item) => ({ list_id: list.id, user_id: userId, term: item.term, meaning: item.meaning })))
+    .select("id, term, meaning");
+  return { data: data ?? [], error: error?.message ?? null };
+}
+
+function parseWords(value: string, name: string) {
+  return name.toLowerCase().endsWith(".csv") ? parseVocabularyCsv(value) : parseVocabularyText(value);
+}
 
 export default function Home() {
   const [entries, setEntries] = useState<VocabularyEntry[]>([]);
@@ -15,7 +30,7 @@ export default function Home() {
   const [view, setView] = useState<"home" | "library" | "today">("home");
   const [deleteTarget, setDeleteTarget] = useState<VocabularyEntry | null>(null);
   const [user, setUser] = useState<{ id: string; username: string } | null>(null);
-  const [status, setStatus] = useState("可拖拽 TXT、CSV 文件，或直接粘贴内容");
+  const [status, setStatus] = useState("可拖拽 TXT、CSV、文字型 PDF，或直接粘贴内容");
   const [dragging, setDragging] = useState(false);
   const [energy, setEnergy] = useState(0);
   const level = Math.floor(energy / 100);
@@ -38,6 +53,19 @@ export default function Home() {
       setUser({ id: authUser.id, username: profile.data?.username ?? authUser.email ?? "用户" });
       setEntries(words.data ?? []);
       setEnergy((days.data ?? []).reduce((sum, day) => sum + day.energy_awarded, 0));
+      const pending = window.sessionStorage.getItem(pendingImportKey);
+      if (pending) {
+        window.sessionStorage.removeItem(pendingImportKey);
+        const { value, name } = JSON.parse(pending) as { value: string; name: string };
+        setSource(value);
+        const { data, error } = await saveWords(authUser.id, parseWords(value, name));
+        if (!active) return;
+        if (error) setStatus(`保存失败：${error}`);
+        else {
+          setEntries((current) => [...data, ...current]);
+          setStatus(`已保存 ${data.length} 个单词到云端`);
+        }
+      }
     }
     void loadData();
     const { data: { subscription } } = supabase.auth.onAuthStateChange(() => { setTimeout(() => { void loadData(); }, 0); });
@@ -46,34 +74,42 @@ export default function Home() {
 
   async function importWords(value: string, name = "") {
     setSource(value);
-    const parsed = name.toLowerCase().endsWith(".csv") ? parseVocabularyCsv(value) : parseVocabularyText(value);
-    if (!user) { setStatus("请先登录，再导入词汇。"); return; }
+    const parsed = parseWords(value, name);
     if (!parsed.length) { setStatus("没有识别到词汇；每行请填写“英文 空格 中文”。"); return; }
-    const { data: list, error: listError } = await supabase.from("vocabulary_lists").insert({ user_id: user.id }).select("id").single();
-    if (listError || !list) { setStatus(listError?.message ?? "创建词表失败"); return; }
-    const { data, error } = await supabase.from("vocabulary_entries")
-      .insert(parsed.map((item) => ({ list_id: list.id, user_id: user.id, term: item.term, meaning: item.meaning })))
-      .select("id, term, meaning");
-    if (error) { setStatus(error.message); return; }
-    setEntries((current) => [...(data ?? []), ...current]);
-    setStatus(`已保存 ${data?.length ?? 0} 个单词到云端`);
+    if (!user) {
+      try {
+        window.sessionStorage.setItem(pendingImportKey, JSON.stringify({ value, name }));
+        setStatus(`已读取 ${parsed.length} 个单词；请登录，登录后会自动保存。`);
+      } catch {
+        setStatus(`已读取 ${parsed.length} 个单词；请登录后重新导入。`);
+      }
+      return;
+    }
+    setStatus(`正在保存 ${parsed.length} 个单词…`);
+    const { data, error } = await saveWords(user.id, parsed);
+    if (error) { setStatus(`保存失败：${error}`); return; }
+    setEntries((current) => [...data, ...current]);
+    setStatus(`已保存 ${data.length} 个单词到云端`);
   }
 
-  function importFile(file: File) {
+  async function importFile(file: File) {
     const extension = file.name.toLowerCase().split(".").pop();
-    if (extension === "txt" || extension === "csv") {
-      const reader = new FileReader();
-      reader.onload = () => { void importWords(String(reader.result ?? ""), file.name); };
-      reader.onerror = () => setStatus("读取文件失败，请重试。");
-      reader.readAsText(file);
-    } else {
-      setStatus("当前仅支持 TXT 和 CSV；其他格式尚未接入解析。");
+    if (extension !== "txt" && extension !== "csv" && extension !== "pdf") {
+      setStatus("当前仅支持 TXT、CSV 和文字型 PDF 文件。");
+      return;
+    }
+    setStatus(`正在读取 ${file.name}…`);
+    try {
+      const value = extension === "pdf" ? await extractPdfText(file) : await file.text();
+      await importWords(value, file.name);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "读取文件失败，请重试。");
     }
   }
 
   function handleFile(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
-    if (file) importFile(file);
+    if (file) void importFile(file);
     event.target.value = "";
   }
 
@@ -87,7 +123,7 @@ export default function Home() {
     if (!event.dataTransfer.files.length) return;
     event.preventDefault();
     setDragging(false);
-    importFile(event.dataTransfer.files[0]);
+    void importFile(event.dataTransfer.files[0]);
   }
 
   async function updateEntry(id: string, field: "term" | "meaning", value: string) {
@@ -136,10 +172,11 @@ export default function Home() {
           <section className="grid gap-5 lg:grid-cols-[1fr_0.8fr]">
             <div className={`rounded-3xl border bg-white p-6 shadow-sm ${dragging ? "border-indigo-500 bg-indigo-50 ring-2 ring-indigo-200" : "border-slate-200"}`} onDragOver={handleDragOver} onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node)) setDragging(false); }} onDrop={handleDrop}>
               <div className="flex items-center justify-between">
-                <div><h2 className="text-xl font-bold">上传今日词汇</h2><p className="mt-1 text-sm text-slate-400">{dragging ? "松开即可导入文件" : status}</p></div>
-                <label className="cursor-pointer rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white">选择文件<input className="hidden" type="file" accept=".txt,.csv" onChange={handleFile} /></label>
+                <div><h2 className="text-xl font-bold">上传今日词汇</h2><p className="mt-1 text-sm text-slate-500" role="status">{dragging ? "松开即可导入文件" : status}</p></div>
+                <label className="cursor-pointer rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white">选择文件<input className="hidden" type="file" accept=".txt,.csv,.pdf,application/pdf" onChange={handleFile} /></label>
               </div>
-              <textarea value={source} onChange={(event) => setSource(event.target.value)} className="mt-5 min-h-48 w-full rounded-2xl border border-slate-200 bg-slate-50 p-4 font-mono text-sm" aria-label="词汇内容，可拖入 TXT 或 CSV 文件" />
+              {!user && <p className="mt-3 rounded-xl bg-amber-50 px-3 py-2 text-sm text-amber-900">保存到云端需要先 <Link href="/auth" className="font-bold underline">登录账号</Link>；拖入的词汇会保留到登录后自动保存。</p>}
+              <textarea value={source} onChange={(event) => setSource(event.target.value)} className="mt-5 min-h-48 w-full rounded-2xl border border-slate-200 bg-slate-50 p-4 font-mono text-sm" aria-label="词汇内容，可拖入 TXT、CSV 或 PDF 文件" />
               <button onClick={() => { void importWords(source); }} className="mt-4 rounded-xl border border-indigo-200 px-4 py-2 text-sm font-semibold text-indigo-700">解析并保存词汇</button>
             </div>
             <div className="flex flex-col gap-4">
