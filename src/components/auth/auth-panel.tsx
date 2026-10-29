@@ -56,7 +56,7 @@ export function AuthPanel() {
           email: form.email.trim(),
           password: form.password,
           options: {
-            emailRedirectTo: `${window.location.origin}/auth`,
+            emailRedirectTo: `${window.location.origin}/auth/confirmed`,
             data: { username: form.username.trim(), phone: form.phone.trim() },
           },
         })
@@ -67,7 +67,7 @@ export function AuthPanel() {
       return;
     }
     if (mode === "register" && !result.data.session) {
-      setMessage("注册成功，请打开邮箱中的验证链接，再回来登录。");
+      setMessage("注册成功，请点击邮件中的链接确认邮箱。");
       return;
     }
     router.push("/");
