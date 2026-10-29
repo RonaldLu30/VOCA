@@ -23,6 +23,25 @@ body {
   font-family: Arial, Helvetica, sans-serif;
 }
 
+.voca-character { position: relative; width: 86px; height: 86px; flex: 0 0 auto; animation: voca-breathe 2.8s ease-in-out infinite; }
+.voca-character svg { width: 100%; height: 100%; overflow: visible; }
+.voca-body, .voca-face { fill: #27b9ed; stroke: #0875b8; stroke-width: 3; }
+.voca-ear { fill: #25b8eb; stroke: #0875b8; stroke-width: 3; }
+.voca-mark { fill: #e9fbff; }
+.voca-arm, .voca-foot { fill: #159bd4; stroke: #0875b8; stroke-width: 3; }
+.voca-eye, .voca-smile { fill: none; stroke: #073b64; stroke-linecap: round; stroke-width: 4; }
+.voca-cheek { fill: #ff9eae; opacity: .9; }
+.voca-shadow { fill: #0b4770; opacity: .18; }
+.is-sleeping { filter: grayscale(1); opacity: .58; }
+.is-sleeping .voca-eye { stroke: #24425a; }
+.is-awake .voca-eye { animation: voca-blink 4s infinite; }
+.is-celebrating { animation: voca-jump .7s ease-in-out 3; }
+.voca-sleep-z { position: absolute; right: -2px; top: 2px; color: #64748b; font-size: 18px; font-weight: 800; animation: voca-float 2s infinite; }
+@keyframes voca-breathe { 0%,100% { transform: translateY(0) scale(1); } 50% { transform: translateY(-2px) scale(1.025); } }
+@keyframes voca-blink { 0%, 44%, 48%, 100% { transform: scaleY(1); } 46% { transform: scaleY(.12); } }
+@keyframes voca-jump { 50% { transform: translateY(-14px) rotate(-3deg); } }
+@keyframes voca-float { 50% { transform: translate(4px,-8px); opacity: .3; } }
+
 .auth-page { min-height: 100vh; display: grid; grid-template-columns: minmax(0, 1fr) minmax(360px, 460px); gap: 5rem; align-items: center; padding: 5rem clamp(1.5rem, 7vw, 8rem); background: #f5f7fb; }
 .auth-intro { max-width: 560px; }
 .brand-mark { display: inline-grid; place-items: center; width: 3.5rem; height: 3.5rem; border-radius: 1rem; background: #172554; color: white; font-weight: 800; letter-spacing: .05em; }
