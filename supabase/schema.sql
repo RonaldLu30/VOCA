@@ -11,9 +11,13 @@ create table if not exists public.vocabulary_lists (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
   title text not null default '今日词汇',
+  day_number integer not null check (day_number > 0),
   study_date date not null default current_date,
   created_at timestamptz not null default now()
 );
+
+create index if not exists vocabulary_lists_user_day_idx
+on public.vocabulary_lists (user_id, day_number);
 
 create table if not exists public.vocabulary_entries (
   id uuid primary key default gen_random_uuid(),
