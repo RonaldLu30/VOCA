@@ -205,7 +205,6 @@ export default function Home() {
           <Link href="/" className="text-4xl font-black tracking-[0.12em] text-indigo-600">VOCA！</Link>
           <div className="flex items-center gap-2 text-sm font-semibold">
             <button onClick={() => setView("home")} className="rounded-lg px-3 py-2 text-slate-600">主页</button>
-            <Link href="/learn?mode=test" className="rounded-lg px-3 py-2 text-slate-600">单词测试</Link>
             <Link href="/review" className="rounded-lg px-3 py-2 text-slate-600">错题库</Link>
             {user ? (
               <details className="relative ml-2">
@@ -256,9 +255,14 @@ export default function Home() {
         {deleteTarget && <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/35 px-5"><div role="dialog" aria-modal="true" className="w-full max-w-md rounded-3xl bg-white p-7 shadow-2xl"><h2 className="text-xl font-bold">确认删除单词？</h2><p className="mt-3 text-slate-600">确定要删除“<strong>{deleteTarget.term}</strong>”吗？</p><div className="mt-6 flex gap-3"><button type="button" onClick={() => setDeleteTarget(null)} className="flex-1 rounded-xl border border-slate-200 px-4 py-3 font-semibold text-slate-600">取消</button><button type="button" onClick={() => { void deleteEntry(); }} className="flex-1 rounded-xl bg-rose-600 px-4 py-3 font-semibold text-white">确认删除</button></div></div></div>}
       </div>
       {dragging && <div className="pointer-events-none fixed inset-0 z-50 grid place-items-center bg-indigo-950/55 p-6"><div className="rounded-3xl border-2 border-dashed border-white bg-indigo-600 px-10 py-8 text-center text-xl font-bold text-white shadow-2xl">松开文件即可导入词汇</div></div>}
-      <div className="fixed bottom-4 left-1/2 z-10 w-[min(92vw,720px)] -translate-x-1/2 rounded-3xl border border-indigo-200 bg-white/90 px-5 py-3 shadow-[0_8px_28px_rgba(79,70,229,0.18)]">
-        <div className="mx-auto max-w-7xl"><div className="flex justify-between text-sm font-semibold"><span className="flex items-center gap-2"><VocaPet awake={false} /><span>VOCA！ · Lv.{level}</span></span><span>{levelProgress} / 100 能量</span></div><div className="mt-2 h-4 overflow-hidden rounded-full border border-indigo-100 bg-indigo-50"><div className="h-full rounded-full bg-gradient-to-r from-indigo-500 via-violet-500 to-fuchsia-500 transition-all" style={{ width: `${levelProgress}%` }} /></div><p className="mt-1 text-xs text-slate-400">完成今日打卡可获得 20 能量，每 100 能量升一级</p></div>
-      </div>
+      <section className="energy-card mx-auto mb-6 mt-2 flex w-[min(92vw,560px)] items-center gap-4 rounded-2xl border border-indigo-200 bg-white px-5 py-3 shadow-sm" aria-label="宠物能量">
+        <VocaPet awake={false} />
+        <div className="min-w-0 flex-1">
+          <div className="flex justify-between gap-3 text-sm font-semibold"><span>VOCA！ · Lv.{level}</span><span>{levelProgress} / 100 能量</span></div>
+          <div className="mt-2 h-2 overflow-hidden rounded-full bg-indigo-50"><div className="h-full rounded-full bg-gradient-to-r from-indigo-500 via-violet-500 to-fuchsia-500" style={{ width: `${levelProgress}%` }} /></div>
+          <p className="mt-1 text-xs text-slate-400">完成今日打卡可获得 20 能量</p>
+        </div>
+      </section>
     </main>
   );
 }

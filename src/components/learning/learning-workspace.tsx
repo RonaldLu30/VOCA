@@ -166,8 +166,8 @@ export function LearningWorkspace({ initialMode }: { initialMode: "memory" | "te
             <p className="mt-4 font-mono text-lg text-indigo-600">{current.phonetic}</p>
             <p className="mt-8 text-2xl font-semibold text-slate-700">{current.meanings.join("；")}</p>
             <div className="mt-8 grid gap-4 sm:grid-cols-2">
-              <div className="rounded-2xl bg-slate-50 p-5"><p className="text-xs font-semibold uppercase tracking-wider text-slate-400">同义词</p><p className="mt-2 text-slate-700">{current.synonyms.join(" · ")}</p></div>
-              <div className="rounded-2xl bg-amber-50 p-5"><p className="text-xs font-semibold uppercase tracking-wider text-amber-600">记忆方法</p><p className="mt-2 text-amber-900">{current.memoryTip}</p></div>
+              <div className="rounded-2xl bg-slate-50 p-5"><p className="text-xs font-semibold uppercase tracking-wider text-slate-400">同义词</p><p className="mt-2 text-slate-700">{current.synonyms.length ? current.synonyms.join(" · ") : "暂无同义词"}</p></div>
+              <div className="rounded-2xl bg-amber-50 p-5"><p className="text-xs font-semibold uppercase tracking-wider text-amber-600">记忆方法</p><p className="mt-2 text-amber-900">{current.memoryTip || "结合词义和例句联想记忆。"}</p></div>
             </div>
             <button type="button" onClick={() => setShowDetails((value) => !value)} className="mt-6 text-sm font-semibold text-indigo-600">{showDetails ? "收起例句" : "查看例句和用法"}</button>
             {showDetails && <p className="mt-3 rounded-2xl border border-indigo-100 bg-indigo-50 p-4 text-indigo-950">{current.example}</p>}
