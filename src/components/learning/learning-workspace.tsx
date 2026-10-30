@@ -30,6 +30,8 @@ export function LearningWorkspace({ initialMode }: { initialMode: "memory" | "te
   const [selectedDay, setSelectedDay] = useState<number | "today">("today");
   const [started, setStarted] = useState(false);
   const [loaded, setLoaded] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [loadAttempt, setLoadAttempt] = useState(0);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [showDetails, setShowDetails] = useState(false);
   const [answer, setAnswer] = useState("");
@@ -37,8 +39,13 @@ export function LearningWorkspace({ initialMode }: { initialMode: "memory" | "te
   const [correctStreak, setCorrectStreak] = useState<Record<string, number>>({});
   const [starredIds, setStarredIds] = useState<string[]>(() => {
     if (typeof window === "undefined") return [];
-    const stored = localStorage.getItem("voca-starred-words");
-    return stored ? JSON.parse(stored) as string[] : [];
+    try {
+      const stored = localStorage.getItem("voca-starred-words");
+      const parsed: unknown = stored ? JSON.parse(stored) : [];
+      return Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === "string") : [];
+    } catch {
+      return [];
+    }
   });
   const [showStarredOnly, setShowStarredOnly] = useState(false);
   const [testQueue, setTestQueue] = useState<VocabularyEntry[]>([]);
@@ -56,42 +63,56 @@ export function LearningWorkspace({ initialMode }: { initialMode: "memory" | "te
 
   useEffect(() => {
     let active = true;
+    const timeout = window.setTimeout(() => {
+      active = false;
+      setLoadError("词汇加载超时，请检查网络后重试。");
+      setLoaded(true);
+    }, 15000);
     async function loadWords() {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!active) return;
-      if (user) {
-        setUserId(user.id);
-        const [words, answers, lists] = await Promise.all([
-          supabase.from("vocabulary_entries")
-            .select("id, list_id, term, meaning, phonetic, part_of_speech, synonyms, example, memory_tip")
-            .eq("user_id", user.id).order("created_at", { ascending: false }),
-          supabase.from("study_records")
-            .select("vocabulary_id, consecutive_correct")
-            .eq("user_id", user.id).order("answered_at", { ascending: true }),
-          supabase.from("vocabulary_lists")
-            .select("id, day_number, created_at")
-            .eq("user_id", user.id).order("created_at", { ascending: false }),
-        ]);
-        if (active) setCloudEntries((words.data ?? []).flatMap((entry) => {
-          const parsed = parseVocabularyText(`${entry.term}\t${entry.meaning}`)[0];
-          if (!parsed) return [];
-          const synonyms = [...new Set([...(entry.synonyms ?? []).flatMap((value: string) => value.split(/[,，;；、/]/)), ...parsed.synonyms]
-            .map((value: string) => value.trim()).filter(isVocabularyTerm))];
-          return [{
-            id: entry.id, listId: entry.list_id, phrase: parsed.term,
-            meanings: parsed.meaning.split(/[；;、]/).map((value: string) => value.trim()).filter(Boolean),
-            phonetic: entry.phonetic ?? undefined, partOfSpeech: entry.part_of_speech ?? undefined,
-            synonyms, antonyms: [], example: entry.example ?? undefined, memoryTip: entry.memory_tip ?? undefined,
-          }];
-        }));
-        if (active) setDayLists(lists.data ?? []);
-        if (active) setCorrectStreak(Object.fromEntries((answers.data ?? []).map((record) => [record.vocabulary_id, record.consecutive_correct])));
+      try {
+        const { data: { user }, error: authError } = await supabase.auth.getUser();
+        if (!active) return;
+        if (authError && authError.name !== "AuthSessionMissingError") throw authError;
+        if (user) {
+          const [words, answers, lists] = await Promise.all([
+            supabase.from("vocabulary_entries")
+              .select("id, list_id, term, meaning, phonetic, part_of_speech, synonyms, example, memory_tip")
+              .eq("user_id", user.id).order("created_at", { ascending: false }),
+            supabase.from("study_records")
+              .select("vocabulary_id, consecutive_correct")
+              .eq("user_id", user.id).order("answered_at", { ascending: true }),
+            supabase.from("vocabulary_lists")
+              .select("id, day_number, created_at")
+              .eq("user_id", user.id).order("created_at", { ascending: false }),
+          ]);
+          if (!active) return;
+          if (words.error || lists.error) throw words.error ?? lists.error;
+          setUserId(user.id);
+          setCloudEntries((words.data ?? []).flatMap((entry) => {
+            const parsed = parseVocabularyText(`${entry.term}\t${entry.meaning}`)[0];
+            if (!parsed) return [];
+            const synonyms = [...new Set([...(entry.synonyms ?? []).flatMap((value: string) => value.split(/[,，;；、/]/)), ...parsed.synonyms]
+              .map((value: string) => value.trim()).filter(isVocabularyTerm))];
+            return [{
+              id: entry.id, listId: entry.list_id, phrase: parsed.term,
+              meanings: parsed.meaning.split(/[；;、]/).map((value: string) => value.trim()).filter(Boolean),
+              phonetic: entry.phonetic ?? undefined, partOfSpeech: entry.part_of_speech ?? undefined,
+              synonyms, antonyms: [], example: entry.example ?? undefined, memoryTip: entry.memory_tip ?? undefined,
+            }];
+          }));
+          setDayLists(lists.data ?? []);
+          setCorrectStreak(Object.fromEntries((answers.data ?? []).map((record) => [record.vocabulary_id, record.consecutive_correct])));
+        }
+      } catch {
+        if (active) setLoadError("词汇加载失败，请检查网络后重试。");
+      } finally {
+        window.clearTimeout(timeout);
+        if (active) setLoaded(true);
       }
-      if (active) setLoaded(true);
     }
     void loadWords();
-    return () => { active = false; };
-  }, []);
+    return () => { active = false; window.clearTimeout(timeout); };
+  }, [loadAttempt]);
 
   useEffect(() => {
     if (mode === "test" && started && !result) answerInputRef.current?.focus();
@@ -151,7 +172,7 @@ export function LearningWorkspace({ initialMode }: { initialMode: "memory" | "te
 
   async function submit(event?: FormEvent) {
     event?.preventDefault();
-    if (!answer.trim() || result) return;
+    if (!current || !answer.trim() || result) return;
     const correct = matchesAnswer(answer, acceptedAnswers);
     const previousRetryRound = retryRounds[current.id];
     const nextRetryRound = correct ? (previousRetryRound ?? 0) + 1 : 0;
@@ -189,6 +210,7 @@ export function LearningWorkspace({ initialMode }: { initialMode: "memory" | "te
   }
 
   if (!loaded) return <main className="p-8">正在加载词汇…</main>;
+  if (loadError) return <main className="p-8"><p role="alert">{loadError}</p><button onClick={() => { setLoadError(null); setLoaded(false); setLoadAttempt((value) => value + 1); }} className="mt-4 rounded-xl bg-indigo-600 px-4 py-2 text-white">重试加载</button><Link href="/" className="ml-4 text-indigo-600">返回主页</Link></main>;
   if (userId && !dayNumbers.length) return <main className="p-8"><p>词库还是空的，请先导入词汇。</p><Link href="/" className="text-indigo-600">返回主页</Link></main>;
 
   if (!started) return (
@@ -206,6 +228,8 @@ export function LearningWorkspace({ initialMode }: { initialMode: "memory" | "te
       </div>
     </main>
   );
+
+  if (!current) return <main className="p-8"><p>当前词表没有可学习的词汇。</p><button onClick={() => { setStarted(false); setIndex(0); }} className="mt-4 text-indigo-600">重新选择词表</button></main>;
 
   return (
     <main className="min-h-screen bg-[#f7f8fc] px-5 py-8 text-slate-900 sm:px-10 lg:px-16">
