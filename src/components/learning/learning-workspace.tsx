@@ -16,13 +16,18 @@ const demoEntries: VocabularyEntry[] = [
 ];
 
 type Result = { answer: string; correct: boolean };
+type DayList = { id: string; day_number: number; created_at: string };
+type CloudEntry = VocabularyEntry & { listId: string };
 
-export function LearningWorkspace() {
+export function LearningWorkspace({ initialMode }: { initialMode: "memory" | "test" }) {
   const router = useRouter();
-  const [mode, setMode] = useState<"memory" | "test">("test");
+  const mode = initialMode;
   const [index, setIndex] = useState(0);
   const [userId, setUserId] = useState<string | null>(null);
-  const [cloudEntries, setCloudEntries] = useState<VocabularyEntry[]>([]);
+  const [cloudEntries, setCloudEntries] = useState<CloudEntry[]>([]);
+  const [dayLists, setDayLists] = useState<DayList[]>([]);
+  const [selectedDay, setSelectedDay] = useState<number | "today">("today");
+  const [started, setStarted] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [showDetails, setShowDetails] = useState(false);
@@ -30,7 +35,11 @@ export function LearningWorkspace() {
   const [result, setResult] = useState<Result | null>(null);
   const [correctStreak, setCorrectStreak] = useState<Record<string, number>>({});
   const [showLeaveDialog, setShowLeaveDialog] = useState(false);
-  const entries = userId ? cloudEntries : demoEntries;
+  const todayDay = dayLists[0]?.day_number;
+  const dayNumbers = [...new Set(dayLists.map((list) => list.day_number))].sort((left, right) => left - right);
+  const activeDay = selectedDay === "today" ? todayDay : selectedDay;
+  const selectedListIds = new Set(dayLists.filter((list) => list.day_number === activeDay).map((list) => list.id));
+  const entries = userId ? cloudEntries.filter((entry) => selectedListIds.has(entry.listId)) : demoEntries;
   const current = entries[index];
   const acceptedAnswers = useMemo(() => current ? [current.phrase, ...current.synonyms] : [], [current]);
 
@@ -41,19 +50,23 @@ export function LearningWorkspace() {
       if (!active) return;
       if (user) {
         setUserId(user.id);
-        const [words, answers] = await Promise.all([
+        const [words, answers, lists] = await Promise.all([
           supabase.from("vocabulary_entries")
-            .select("id, term, meaning, phonetic, part_of_speech, synonyms, example, memory_tip")
+            .select("id, list_id, term, meaning, phonetic, part_of_speech, synonyms, example, memory_tip")
             .eq("user_id", user.id).order("created_at", { ascending: false }),
           supabase.from("study_records")
             .select("vocabulary_id, consecutive_correct")
             .eq("user_id", user.id).order("answered_at", { ascending: true }),
+          supabase.from("vocabulary_lists")
+            .select("id, day_number, created_at")
+            .eq("user_id", user.id).order("created_at", { ascending: false }),
         ]);
         if (active) setCloudEntries((words.data ?? []).map((entry) => ({
-          id: entry.id, phrase: entry.term, meanings: entry.meaning.split(/[；;、]/).map((value: string) => value.trim()).filter(Boolean),
+          id: entry.id, listId: entry.list_id, phrase: entry.term, meanings: entry.meaning.split(/[；;、]/).map((value: string) => value.trim()).filter(Boolean),
           phonetic: entry.phonetic ?? undefined, partOfSpeech: entry.part_of_speech ?? undefined,
           synonyms: entry.synonyms ?? [], antonyms: [], example: entry.example ?? undefined, memoryTip: entry.memory_tip ?? undefined,
         })));
+        if (active) setDayLists(lists.data ?? []);
         if (active) setCorrectStreak(Object.fromEntries((answers.data ?? []).map((record) => [record.vocabulary_id, record.consecutive_correct])));
       }
       if (active) setLoaded(true);
@@ -69,6 +82,21 @@ export function LearningWorkspace() {
     setAnswer("");
     setResult(null);
     setShowDetails(false);
+  }
+
+  function previous() {
+    setIndex((value) => (value - 1 + entries.length) % entries.length);
+    setAnswer("");
+    setResult(null);
+    setShowDetails(false);
+  }
+
+  function selectDay(day: number | "today") {
+    setSelectedDay(day);
+    setStarted(false);
+    setIndex(0);
+    setAnswer("");
+    setResult(null);
   }
 
   async function submit(event?: FormEvent) {
@@ -95,7 +123,23 @@ export function LearningWorkspace() {
   }
 
   if (!loaded) return <main className="p-8">正在加载词汇…</main>;
-  if (userId && !entries.length) return <main className="p-8"><p>词库还是空的，请先导入词汇。</p><Link href="/" className="text-indigo-600">返回主页</Link></main>;
+  if (userId && !dayNumbers.length) return <main className="p-8"><p>词库还是空的，请先导入词汇。</p><Link href="/" className="text-indigo-600">返回主页</Link></main>;
+
+  if (!started) return (
+    <main className="min-h-screen bg-[#f7f8fc] px-5 py-8 text-slate-900 sm:px-10">
+      <div className="mx-auto max-w-3xl">
+        <Link href="/" className="text-sm font-semibold text-indigo-600">← 返回主页</Link>
+        <h1 className="mt-6 text-3xl font-bold">{mode === "memory" ? "单词背诵" : "单词测试"}</h1>
+        <p className="mt-2 text-slate-500">选择要学习的词汇</p>
+        <div className="mt-8 grid gap-3 sm:grid-cols-2">
+          <button type="button" onClick={() => selectDay("today")} className={`rounded-2xl border p-5 text-left font-semibold ${selectedDay === "today" ? "border-indigo-500 bg-indigo-50 text-indigo-700" : "border-slate-200 bg-white"}`}>今日单词<span className="mt-1 block text-sm font-normal">{userId ? `最近导入的第${todayDay}天` : "示例词汇"}</span></button>
+          {dayNumbers.map((day) => <button key={day} type="button" onClick={() => selectDay(day)} className={`rounded-2xl border p-5 text-left font-semibold ${selectedDay === day ? "border-indigo-500 bg-indigo-50 text-indigo-700" : "border-slate-200 bg-white"}`}>第{day}天单词</button>)}
+        </div>
+        <button type="button" onClick={() => setStarted(true)} disabled={!entries.length} className="mt-6 rounded-xl bg-indigo-600 px-6 py-3 font-semibold text-white disabled:bg-slate-300">开始{mode === "memory" ? "背诵" : "测试"}（{entries.length}词）</button>
+        {!entries.length && <p className="mt-3 text-sm text-slate-500">这一天暂无单词，请选择其他天。</p>}
+      </div>
+    </main>
+  );
 
   return (
     <main className="min-h-screen bg-[#f7f8fc] px-5 py-8 text-slate-900 sm:px-10 lg:px-16">
@@ -103,12 +147,13 @@ export function LearningWorkspace() {
         <header className="mb-8 flex flex-wrap items-end justify-between gap-4">
           <div>
             <button type="button" onClick={() => setShowLeaveDialog(true)} className="home-return-button mb-4">← 返回主页</button>
-            <p className="mb-2 text-sm font-semibold uppercase tracking-[0.2em] text-indigo-600">VOCA！· 今日学习</p>
-            <h1 className="text-3xl font-bold tracking-tight sm:text-4xl">记住每一个词，再把它写出来</h1>
+            <p className="mb-2 text-sm font-semibold uppercase tracking-[0.2em] text-indigo-600">VOCA！· {selectedDay === "today" ? "今日单词" : `第${selectedDay}天`}</p>
+            <h1 className="text-3xl font-bold tracking-tight sm:text-4xl">{mode === "memory" ? "单词背诵" : "单词测试"}</h1>
+            <button type="button" onClick={() => setStarted(false)} className="mt-3 text-sm font-semibold text-indigo-600">切换学习天数</button>
           </div>
           <div className="rounded-2xl border border-indigo-100 bg-white px-4 py-3 text-right shadow-sm">
-            <p className="text-xs text-slate-400">今日进度</p>
-            <p className="text-2xl font-bold text-indigo-600">{index + (result ? 1 : 0)} / {entries.length}</p>
+            <p className="text-xs text-slate-400">当前词条</p>
+            <p className="text-2xl font-bold text-indigo-600">{index + 1} / {entries.length}</p>
           </div>
         </header>
         {mode === "memory" ? (
@@ -126,7 +171,7 @@ export function LearningWorkspace() {
             </div>
             <button type="button" onClick={() => setShowDetails((value) => !value)} className="mt-6 text-sm font-semibold text-indigo-600">{showDetails ? "收起例句" : "查看例句和用法"}</button>
             {showDetails && <p className="mt-3 rounded-2xl border border-indigo-100 bg-indigo-50 p-4 text-indigo-950">{current.example}</p>}
-            <button type="button" onClick={() => { setMode("test"); setResult(null); }} className="mt-8 w-full rounded-xl bg-slate-900 px-5 py-3 font-semibold text-white hover:bg-slate-800">开始测试</button>
+            <div className="mt-8 flex gap-3"><button type="button" onClick={previous} className="flex-1 rounded-xl border border-slate-200 px-5 py-3 font-semibold">上一个</button><button type="button" onClick={next} className="flex-1 rounded-xl bg-slate-900 px-5 py-3 font-semibold text-white">下一个</button></div>
           </section>
         ) : (
           <section className="rounded-3xl border border-slate-200 bg-white p-7 shadow-sm sm:p-10">
@@ -141,7 +186,7 @@ export function LearningWorkspace() {
             {saveError && <p role="status" className="mt-3 text-sm text-rose-600">记录保存失败：{saveError}</p>}
           </section>
         )}
-        {showLeaveDialog && <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/35 px-5"><div role="dialog" aria-modal="true" className="w-full max-w-md rounded-3xl bg-white p-7 shadow-2xl"><h2 className="text-xl font-bold text-slate-900">确认离开测试？</h2><p className="mt-3 leading-7 text-slate-600">还有 <strong className="text-indigo-600">{Math.max(entries.length - index - (result ? 1 : 0), 0)}</strong> 个单词就完成任务了，确认离开吗？</p><p className="mt-2 text-sm text-slate-400">如果离开再回来，当前进度也不会改变。</p><div className="mt-6 flex gap-3"><button type="button" onClick={() => setShowLeaveDialog(false)} className="flex-1 rounded-xl border border-slate-200 px-4 py-3 text-sm font-semibold text-slate-600">继续测试</button><button type="button" onClick={() => router.push("/")} className="flex-1 rounded-xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white">确认离开</button></div></div></div>}
+        {showLeaveDialog && <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/35 px-5"><div role="dialog" aria-modal="true" className="w-full max-w-md rounded-3xl bg-white p-7 shadow-2xl"><h2 className="text-xl font-bold text-slate-900">确认离开{mode === "memory" ? "背诵" : "测试"}？</h2><p className="mt-3 leading-7 text-slate-600">确认返回主页吗？</p><div className="mt-6 flex gap-3"><button type="button" onClick={() => setShowLeaveDialog(false)} className="flex-1 rounded-xl border border-slate-200 px-4 py-3 text-sm font-semibold text-slate-600">继续学习</button><button type="button" onClick={() => router.push("/")} className="flex-1 rounded-xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white">确认离开</button></div></div></div>}
       </div>
     </main>
   );
