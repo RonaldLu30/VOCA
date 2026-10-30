@@ -20,6 +20,8 @@ Open [http://localhost:3000](http://localhost:3000) with your browser to see the
 
 TXT, CSV, text-based PDF, DOCX, and DOC files can be imported. The importer recognizes common English, Chinese meaning, and synonym column names even when the columns are reordered or a directory column is present. It previews the recognized entries before saving them. Check the preview and cancel if the file needs correction. Scanned PDFs need OCR first.
 
+In the vocabulary library, choose **编辑** on a day to move its words to another day number or delete the entire day. Moving to an existing day merges the groups. Deleting a day also removes its study records and shifts later day numbers down by one.
+
 You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.

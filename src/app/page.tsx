@@ -49,6 +49,11 @@ export default function Home() {
   const [savingPreview, setSavingPreview] = useState(false);
   const [view, setView] = useState<"home" | "library">("home");
   const [deleteTarget, setDeleteTarget] = useState<StoredEntry | null>(null);
+  const [editingDay, setEditingDay] = useState<number | null>(null);
+  const [dayNumberInput, setDayNumberInput] = useState("");
+  const [confirmDayDelete, setConfirmDayDelete] = useState(false);
+  const [dayBusy, setDayBusy] = useState(false);
+  const [dayMessage, setDayMessage] = useState("");
   const [user, setUser] = useState<{ id: string; username: string } | null>(null);
   const [status, setStatus] = useState("可拖拽 TXT、CSV、文字型 PDF、Word，或直接粘贴内容");
   const [dragging, setDragging] = useState(false);
@@ -59,6 +64,8 @@ export default function Home() {
   const streak = calculateStreak(completedDates, today);
   const completedToday = completedDates.includes(today);
   const orderedDays = [...new Set(lists.map((list) => list.day_number))].sort((left, right) => left - right);
+  const editingListIds = new Set(lists.filter((list) => list.day_number === editingDay).map((list) => list.id));
+  const editingEntryCount = entries.filter((entry) => editingListIds.has(entry.list_id)).length;
 
   useEffect(() => {
     window.localStorage.removeItem("wordkiller.auth.account");
@@ -229,6 +236,78 @@ export default function Home() {
     setDeleteTarget(null);
   }
 
+  function openDayEditor(day: number) {
+    setEditingDay(day);
+    setDayNumberInput(String(day));
+    setConfirmDayDelete(false);
+    setDayMessage("");
+  }
+
+  async function updateListDay(ids: string[], day: number) {
+    if (!user) throw new Error("请先登录账号");
+    const { data, error } = await supabase.from("vocabulary_lists")
+      .update({ day_number: day, title: `第${day}天` })
+      .eq("user_id", user.id).in("id", ids).select("id");
+    if (error || data?.length !== ids.length) throw new Error(error?.message ?? "词表更新不完整，请刷新后重试");
+  }
+
+  async function renameDay() {
+    if (editingDay === null || dayBusy) return;
+    const target = Number(dayNumberInput);
+    if (!Number.isSafeInteger(target) || target < 1 || target > 9999) {
+      setDayMessage("请输入 1 到 9999 之间的整数天数");
+      return;
+    }
+    if (target === editingDay) { setEditingDay(null); return; }
+    const ids = lists.filter((list) => list.day_number === editingDay).map((list) => list.id);
+    if (!ids.length) { setDayMessage("这一天的词表已不存在，请刷新页面"); return; }
+    setDayBusy(true);
+    try {
+      await updateListDay(ids, target);
+      setLists((current) => current.map((list) => list.day_number === editingDay ? { ...list, day_number: target } : list));
+      setDayMessage(`已将第${editingDay}天改为第${target}天${orderedDays.includes(target) ? "，并入已有词表" : ""}`);
+      setEditingDay(null);
+    } catch (error) {
+      setDayMessage(error instanceof Error ? error.message : "修改天数失败");
+    } finally {
+      setDayBusy(false);
+    }
+  }
+
+  async function deleteDay() {
+    if (editingDay === null || !user || dayBusy) return;
+    const deletedDay = editingDay;
+    const deletedIds = lists.filter((list) => list.day_number === deletedDay).map((list) => list.id);
+    if (!deletedIds.length) { setDayMessage("这一天的词表已不存在，请刷新页面"); return; }
+    const changed: { ids: string[]; originalDay: number }[] = [];
+    setDayBusy(true);
+    try {
+      for (const day of orderedDays.filter((number) => number > deletedDay)) {
+        const ids = lists.filter((list) => list.day_number === day).map((list) => list.id);
+        await updateListDay(ids, day - 1);
+        changed.push({ ids, originalDay: day });
+      }
+      const { error } = await supabase.from("vocabulary_lists")
+        .delete().eq("user_id", user.id).in("id", deletedIds);
+      if (error) throw error;
+      const deletedSet = new Set(deletedIds);
+      setEntries((current) => current.filter((entry) => !deletedSet.has(entry.list_id)));
+      setLists((current) => current.filter((list) => !deletedSet.has(list.id))
+        .map((list) => list.day_number > deletedDay ? { ...list, day_number: list.day_number - 1 } : list));
+      setDayMessage(`已删除第${deletedDay}天，后续天数已自动前移`);
+      setEditingDay(null);
+    } catch (error) {
+      let rollbackFailed = false;
+      for (const change of changed.reverse()) {
+        try { await updateListDay(change.ids, change.originalDay); }
+        catch { rollbackFailed = true; }
+      }
+      setDayMessage(`${error instanceof Error ? error.message : "删除失败"}${rollbackFailed ? "；天数恢复不完整，请刷新页面" : "；原词表仍保留"}`);
+    } finally {
+      setDayBusy(false);
+    }
+  }
+
   async function signOut() {
     await supabase.auth.signOut();
     setUser(null);
@@ -286,10 +365,11 @@ export default function Home() {
         {view === "library" && (
           <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
             <div className="mb-5 flex items-center justify-between"><h2 className="text-2xl font-bold">我的单词库</h2><button onClick={() => setView("home")} className="rounded-xl border border-slate-200 px-4 py-2 text-sm">返回主页</button></div>
+            {dayMessage && editingDay === null && <p role="status" className="mb-4 rounded-xl bg-indigo-50 p-3 text-sm text-indigo-700">{dayMessage}</p>}
             {orderedDays.map((day) => {
               const listIds = new Set(lists.filter((list) => list.day_number === day).map((list) => list.id));
               const dayEntries = entries.filter((entry) => listIds.has(entry.list_id));
-              return <div key={day} className="mb-7"><h3 className="mb-3 rounded-xl bg-indigo-50 px-4 py-3 text-lg font-bold text-indigo-700">第{day}天 <span className="text-sm font-normal">· {dayEntries.length} 个单词</span></h3><div className="overflow-x-auto"><table className="w-full min-w-[600px] text-left text-sm"><thead className="border-b text-xs text-slate-400"><tr><th className="p-3">#</th><th className="p-3">英文 / 短语</th><th className="p-3">中文释义</th><th className="p-3">操作</th></tr></thead><tbody>
+              return <div key={day} className="mb-7"><div className="mb-3 flex items-center justify-between rounded-xl bg-indigo-50 px-4 py-3 text-indigo-700"><h3 className="text-lg font-bold">第{day}天 <span className="text-sm font-normal">· {dayEntries.length} 个单词</span></h3><button type="button" onClick={() => openDayEditor(day)} className="rounded-lg bg-white px-3 py-1 text-sm font-semibold shadow-sm">编辑</button></div><div className="overflow-x-auto"><table className="w-full min-w-[600px] text-left text-sm"><thead className="border-b text-xs text-slate-400"><tr><th className="p-3">#</th><th className="p-3">英文 / 短语</th><th className="p-3">中文释义</th><th className="p-3">操作</th></tr></thead><tbody>
                 {dayEntries.map((entry, index) => <tr key={entry.id} className="border-b border-slate-50"><td className="p-3 text-slate-400">{index + 1}</td><td className="p-3"><input value={entry.term} onChange={(event) => setEntries((current) => current.map((item) => item.id === entry.id ? { ...item, term: event.target.value } : item))} onBlur={(event) => { void updateEntry(entry.id, "term", event.target.value); }} className="w-full rounded-lg px-2 py-2 font-semibold" /></td><td className="p-3"><input value={entry.meaning} onChange={(event) => setEntries((current) => current.map((item) => item.id === entry.id ? { ...item, meaning: event.target.value } : item))} onBlur={(event) => { void updateEntry(entry.id, "meaning", event.target.value); }} className="w-full rounded-lg px-2 py-2 text-slate-600" /></td><td className="p-3"><button type="button" onClick={() => setDeleteTarget(entry)} className="font-semibold text-rose-600">删除</button></td></tr>)}
               </tbody></table></div></div>;
             })}
@@ -297,6 +377,19 @@ export default function Home() {
             {status.startsWith("保存失败") || status.startsWith("删除失败") ? <p role="status" className="text-rose-600">{status}</p> : null}
           </section>
         )}
+        {editingDay !== null && <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/35 px-5"><div role="dialog" aria-modal="true" aria-label={`编辑第${editingDay}天`} className="w-full max-w-md rounded-3xl bg-white p-7 shadow-2xl">
+          <h2 className="text-xl font-bold">编辑第{editingDay}天</h2>
+          {confirmDayDelete ? <>
+            <p className="mt-3 leading-7 text-slate-600">确定删除这一天的 {editingEntryCount} 个单词及对应测试记录吗？后续天数会自动前移，此操作无法撤销。</p>
+            <div className="mt-6 flex gap-3"><button type="button" disabled={dayBusy} onClick={() => setConfirmDayDelete(false)} className="flex-1 rounded-xl border border-slate-200 px-4 py-3 font-semibold disabled:opacity-50">返回编辑</button><button type="button" disabled={dayBusy} onClick={() => { void deleteDay(); }} className="flex-1 rounded-xl bg-rose-600 px-4 py-3 font-semibold text-white disabled:opacity-50">{dayBusy ? "正在删除…" : "确认删除整天"}</button></div>
+          </> : <>
+            <label className="mt-5 block text-sm font-semibold text-slate-700">改为第几天<input type="number" min="1" max="9999" step="1" value={dayNumberInput} onChange={(event) => setDayNumberInput(event.target.value)} className="mt-2 w-full rounded-xl border border-slate-200 px-4 py-3 text-lg" /></label>
+            <p className="mt-3 text-sm text-slate-500">若目标天数已存在，这一天的单词会并入该天。</p>
+            <div className="mt-6 flex gap-3"><button type="button" disabled={dayBusy} onClick={() => { void renameDay(); }} className="flex-1 rounded-xl bg-indigo-600 px-4 py-3 font-semibold text-white disabled:opacity-50">{dayBusy ? "正在保存…" : "保存天数"}</button><button type="button" disabled={dayBusy} onClick={() => setConfirmDayDelete(true)} className="rounded-xl border border-rose-200 px-4 py-3 font-semibold text-rose-600 disabled:opacity-50">删除整天</button></div>
+            <button type="button" disabled={dayBusy} onClick={() => setEditingDay(null)} className="mt-4 w-full py-2 text-sm text-slate-500 disabled:opacity-50">取消</button>
+          </>}
+          {dayMessage && <p role="alert" className="mt-4 text-sm text-rose-600">{dayMessage}</p>}
+        </div></div>}
         {deleteTarget && <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/35 px-5"><div role="dialog" aria-modal="true" className="w-full max-w-md rounded-3xl bg-white p-7 shadow-2xl"><h2 className="text-xl font-bold">确认删除单词？</h2><p className="mt-3 text-slate-600">确定要删除“<strong>{deleteTarget.term}</strong>”吗？</p><div className="mt-6 flex gap-3"><button type="button" onClick={() => setDeleteTarget(null)} className="flex-1 rounded-xl border border-slate-200 px-4 py-3 font-semibold text-slate-600">取消</button><button type="button" onClick={() => { void deleteEntry(); }} className="flex-1 rounded-xl bg-rose-600 px-4 py-3 font-semibold text-white">确认删除</button></div></div></div>}
       </div>
       {dragging && <div className="pointer-events-none fixed inset-0 z-50 grid place-items-center bg-indigo-950/55 p-6"><div className="rounded-3xl border-2 border-dashed border-white bg-indigo-600 px-10 py-8 text-center text-xl font-bold text-white shadow-2xl">松开文件即可导入词汇</div></div>}
