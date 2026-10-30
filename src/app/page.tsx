@@ -7,10 +7,12 @@ import { parseVocabularyCsv, parseVocabularyText, VocabularyEntry } from "@/lib/
 import { extractPdfText } from "@/lib/pdf-vocabulary";
 import { detectDayNumber, nextDayNumber } from "@/lib/study-day";
 import { createClient } from "@/lib/supabase/client";
+import { calculateStreak } from "@/lib/review";
 
 const supabase = createClient();
 const sample = "abandon\t放弃；遗弃\naccurate\t准确的\ntake advantage of\t利用";
 const pendingImportKey = "voca.pendingImport";
+const today = new Date().toISOString().slice(0, 10);
 type StoredEntry = VocabularyEntry & { list_id: string };
 type StoredList = { id: string; day_number: number; created_at: string };
 
@@ -48,8 +50,11 @@ export default function Home() {
   const [status, setStatus] = useState("可拖拽 TXT、CSV、文字型 PDF，或直接粘贴内容");
   const [dragging, setDragging] = useState(false);
   const [energy, setEnergy] = useState(0);
+  const [completedDates, setCompletedDates] = useState<string[]>([]);
   const level = Math.floor(energy / 100);
   const levelProgress = energy % 100;
+  const streak = calculateStreak(completedDates, today);
+  const completedToday = completedDates.includes(today);
   const orderedDays = [...new Set(lists.map((list) => list.day_number))].sort((left, right) => left - right);
 
   useEffect(() => {
@@ -64,13 +69,14 @@ export default function Home() {
         supabase.from("profiles").select("username").eq("id", authUser.id).single(),
         supabase.from("vocabulary_entries").select("id, term, meaning, list_id").eq("user_id", authUser.id).order("created_at", { ascending: false }),
         supabase.from("vocabulary_lists").select("id, day_number, created_at").eq("user_id", authUser.id).order("created_at", { ascending: false }),
-        supabase.from("study_days").select("energy_awarded").eq("user_id", authUser.id),
+        supabase.from("study_days").select("study_date, energy_awarded").eq("user_id", authUser.id),
       ]);
       if (!active) return;
       setUser({ id: authUser.id, username: profile.data?.username ?? authUser.email ?? "用户" });
       setEntries(words.data ?? []);
       setLists(savedLists.data ?? []);
       setEnergy((days.data ?? []).reduce((sum, day) => sum + day.energy_awarded, 0));
+      setCompletedDates((days.data ?? []).map((day) => day.study_date));
       const pending = window.sessionStorage.getItem(pendingImportKey);
       if (pending) {
         window.sessionStorage.removeItem(pendingImportKey);
@@ -256,11 +262,11 @@ export default function Home() {
       </div>
       {dragging && <div className="pointer-events-none fixed inset-0 z-50 grid place-items-center bg-indigo-950/55 p-6"><div className="rounded-3xl border-2 border-dashed border-white bg-indigo-600 px-10 py-8 text-center text-xl font-bold text-white shadow-2xl">松开文件即可导入词汇</div></div>}
       <section className="energy-card mx-auto mb-6 mt-2 flex w-[min(92vw,560px)] items-center gap-4 rounded-2xl border border-indigo-200 bg-white px-5 py-3 shadow-sm" aria-label="宠物能量">
-        <VocaPet awake={false} />
+        <VocaPet awake={completedToday} celebrating={completedToday} />
         <div className="min-w-0 flex-1">
           <div className="flex justify-between gap-3 text-sm font-semibold"><span>VOCA！ · Lv.{level}</span><span>{levelProgress} / 100 能量</span></div>
           <div className="mt-2 h-2 overflow-hidden rounded-full bg-indigo-50"><div className="h-full rounded-full bg-gradient-to-r from-indigo-500 via-violet-500 to-fuchsia-500" style={{ width: `${levelProgress}%` }} /></div>
-          <p className="mt-1 text-xs text-slate-400">完成今日打卡可获得 20 能量</p>
+          <p className="mt-1 text-xs text-slate-400">{completedToday ? `已连续${streak}日打卡，继续加油！` : "完成今日打卡可获得 20 能量"}</p>
         </div>
       </section>
     </main>
