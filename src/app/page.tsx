@@ -47,7 +47,7 @@ export default function Home() {
   const [view, setView] = useState<"home" | "library">("home");
   const [deleteTarget, setDeleteTarget] = useState<StoredEntry | null>(null);
   const [user, setUser] = useState<{ id: string; username: string } | null>(null);
-  const [status, setStatus] = useState("可拖拽 TXT、CSV、文字型 PDF，或直接粘贴内容");
+  const [status, setStatus] = useState("可拖拽 TXT、CSV、文字型 PDF、Word，或直接粘贴内容");
   const [dragging, setDragging] = useState(false);
   const [energy, setEnergy] = useState(0);
   const [completedDates, setCompletedDates] = useState<string[]>([]);
@@ -125,13 +125,22 @@ export default function Home() {
 
   async function importFile(file: File) {
     const extension = file.name.toLowerCase().split(".").pop();
-    if (extension !== "txt" && extension !== "csv" && extension !== "pdf") {
-      setStatus("当前仅支持 TXT、CSV 和文字型 PDF 文件。");
+    if (extension !== "txt" && extension !== "csv" && extension !== "pdf" && extension !== "docx" && extension !== "doc") {
+      setStatus("当前支持 TXT、CSV、文字型 PDF、DOCX 和 DOC 文件。");
       return;
     }
     setStatus(`正在读取 ${file.name}…`);
     try {
-      const value = extension === "pdf" ? await extractPdfText(file) : await file.text();
+      let value: string;
+      if (extension === "pdf") value = await extractPdfText(file);
+      else if (extension === "docx" || extension === "doc") {
+        const form = new FormData();
+        form.append("file", file);
+        const response = await fetch("/api/vocabulary/extract-word", { method: "POST", body: form });
+        const result = await response.json() as { text?: string; error?: string };
+        if (!response.ok || !result.text) throw new Error(result.error ?? "Word 文件解析失败");
+        value = result.text;
+      } else value = await file.text();
       await importWords(value, file.name);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "读取文件失败，请重试。");
@@ -230,11 +239,11 @@ export default function Home() {
             <div className={`rounded-3xl border bg-white p-6 shadow-sm ${dragging ? "border-indigo-500 bg-indigo-50 ring-2 ring-indigo-200" : "border-slate-200"}`}>
               <div className="flex items-center justify-between">
                 <div><h2 className="text-xl font-bold">导入单词文件</h2><p className="mt-1 text-sm text-slate-500" role="status">{dragging ? "松开即可导入文件" : status}</p></div>
-                <label className="cursor-pointer rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white">选择文件<input className="hidden" type="file" multiple accept=".txt,.csv,.pdf,application/pdf" onChange={handleFile} /></label>
+                <label className="cursor-pointer rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white">选择文件<input className="hidden" type="file" multiple accept=".txt,.csv,.pdf,.docx,.doc,application/pdf" onChange={handleFile} /></label>
               </div>
               <p className="mt-3 text-sm text-slate-500">从微信直接拖放若无反应，请先把 PDF 保存到电脑，再拖入或选择文件。</p>
               {!user && <p className="mt-3 rounded-xl bg-amber-50 px-3 py-2 text-sm text-amber-900">保存到云端需要先 <Link href="/auth" className="font-bold underline">登录账号</Link>；拖入的词汇会保留到登录后自动保存。</p>}
-              <textarea value={source} onChange={(event) => setSource(event.target.value)} className="mt-5 min-h-48 w-full rounded-2xl border border-slate-200 bg-slate-50 p-4 font-mono text-sm" aria-label="词汇内容，可拖入 TXT、CSV 或 PDF 文件" />
+              <textarea value={source} onChange={(event) => setSource(event.target.value)} className="mt-5 min-h-48 w-full rounded-2xl border border-slate-200 bg-slate-50 p-4 font-mono text-sm" aria-label="词汇内容，可拖入 TXT、CSV、PDF 或 Word 文件" />
               <button onClick={() => { void importWords(source); }} className="mt-4 rounded-xl border border-indigo-200 px-4 py-2 text-sm font-semibold text-indigo-700">解析并保存词汇</button>
             </div>
             <div className="flex flex-col gap-4">
