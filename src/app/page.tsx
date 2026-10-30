@@ -1,6 +1,6 @@
 "use client";
 
-import { ChangeEvent, DragEvent, useEffect, useState } from "react";
+import { ChangeEvent, useEffect, useState } from "react";
 import Link from "next/link";
 import { VocaPet } from "@/components/voca-pet";
 import { parseVocabularyCsv, parseVocabularyText, VocabularyEntry } from "@/lib/vocabulary-parser";
@@ -113,18 +113,44 @@ export default function Home() {
     event.target.value = "";
   }
 
-  function handleDragOver(event: DragEvent<HTMLDivElement>) {
-    if (!event.dataTransfer.types.includes("Files")) return;
-    event.preventDefault();
-    setDragging(true);
-  }
+  useEffect(() => {
+    function handleDragOver(event: globalThis.DragEvent) {
+      event.preventDefault();
+      if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
+      setDragging(true);
+    }
 
-  function handleDrop(event: DragEvent<HTMLDivElement>) {
-    if (!event.dataTransfer.files.length) return;
-    event.preventDefault();
-    setDragging(false);
-    void importFile(event.dataTransfer.files[0]);
-  }
+    function handleDrop(event: globalThis.DragEvent) {
+      event.preventDefault();
+      setDragging(false);
+      const transfer = event.dataTransfer;
+      const file = transfer?.files[0] ?? Array.from(transfer?.items ?? [])
+        .find((item) => item.kind === "file")?.getAsFile();
+      if (file) void importFile(file);
+      else setStatus("未收到文件。若从微信拖入，请先在微信中保存 PDF，再从文件管理器拖入或点击“选择文件”。");
+    }
+
+    function handleDragEnd() {
+      setDragging(false);
+    }
+
+    function handleDragLeave(event: globalThis.DragEvent) {
+      if (event.clientX <= 0 || event.clientY <= 0 || event.clientX >= window.innerWidth || event.clientY >= window.innerHeight) {
+        setDragging(false);
+      }
+    }
+
+    window.addEventListener("dragover", handleDragOver, true);
+    window.addEventListener("drop", handleDrop, true);
+    window.addEventListener("dragend", handleDragEnd, true);
+    window.addEventListener("dragleave", handleDragLeave, true);
+    return () => {
+      window.removeEventListener("dragover", handleDragOver, true);
+      window.removeEventListener("drop", handleDrop, true);
+      window.removeEventListener("dragend", handleDragEnd, true);
+      window.removeEventListener("dragleave", handleDragLeave, true);
+    };
+  });
 
   async function updateEntry(id: string, field: "term" | "meaning", value: string) {
     setEntries((current) => current.map((item) => item.id === id ? { ...item, [field]: value } : item));
@@ -170,11 +196,12 @@ export default function Home() {
         <header className="mb-7"><p className="text-lg font-semibold tracking-[0.08em] text-slate-500">voca！记住了！</p></header>
         {view === "home" && (
           <section className="grid gap-5 lg:grid-cols-[1fr_0.8fr]">
-            <div className={`rounded-3xl border bg-white p-6 shadow-sm ${dragging ? "border-indigo-500 bg-indigo-50 ring-2 ring-indigo-200" : "border-slate-200"}`} onDragOver={handleDragOver} onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node)) setDragging(false); }} onDrop={handleDrop}>
+            <div className={`rounded-3xl border bg-white p-6 shadow-sm ${dragging ? "border-indigo-500 bg-indigo-50 ring-2 ring-indigo-200" : "border-slate-200"}`}>
               <div className="flex items-center justify-between">
                 <div><h2 className="text-xl font-bold">上传今日词汇</h2><p className="mt-1 text-sm text-slate-500" role="status">{dragging ? "松开即可导入文件" : status}</p></div>
                 <label className="cursor-pointer rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white">选择文件<input className="hidden" type="file" accept=".txt,.csv,.pdf,application/pdf" onChange={handleFile} /></label>
               </div>
+              <p className="mt-3 text-sm text-slate-500">从微信直接拖放若无反应，请先把 PDF 保存到电脑，再拖入或选择文件。</p>
               {!user && <p className="mt-3 rounded-xl bg-amber-50 px-3 py-2 text-sm text-amber-900">保存到云端需要先 <Link href="/auth" className="font-bold underline">登录账号</Link>；拖入的词汇会保留到登录后自动保存。</p>}
               <textarea value={source} onChange={(event) => setSource(event.target.value)} className="mt-5 min-h-48 w-full rounded-2xl border border-slate-200 bg-slate-50 p-4 font-mono text-sm" aria-label="词汇内容，可拖入 TXT、CSV 或 PDF 文件" />
               <button onClick={() => { void importWords(source); }} className="mt-4 rounded-xl border border-indigo-200 px-4 py-2 text-sm font-semibold text-indigo-700">解析并保存词汇</button>
@@ -197,6 +224,7 @@ export default function Home() {
         )}
         {deleteTarget && <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/35 px-5"><div role="dialog" aria-modal="true" className="w-full max-w-md rounded-3xl bg-white p-7 shadow-2xl"><h2 className="text-xl font-bold">确认删除单词？</h2><p className="mt-3 text-slate-600">确定要删除“<strong>{deleteTarget.term}</strong>”吗？</p><div className="mt-6 flex gap-3"><button type="button" onClick={() => setDeleteTarget(null)} className="flex-1 rounded-xl border border-slate-200 px-4 py-3 font-semibold text-slate-600">取消</button><button type="button" onClick={() => { void deleteEntry(); }} className="flex-1 rounded-xl bg-rose-600 px-4 py-3 font-semibold text-white">确认删除</button></div></div></div>}
       </div>
+      {dragging && <div className="pointer-events-none fixed inset-0 z-50 grid place-items-center bg-indigo-950/55 p-6"><div className="rounded-3xl border-2 border-dashed border-white bg-indigo-600 px-10 py-8 text-center text-xl font-bold text-white shadow-2xl">松开文件即可导入词汇</div></div>}
       <div className="fixed bottom-4 left-1/2 z-10 w-[min(92vw,720px)] -translate-x-1/2 rounded-3xl border border-indigo-200 bg-white/90 px-5 py-3 shadow-[0_8px_28px_rgba(79,70,229,0.18)]">
         <div className="mx-auto max-w-7xl"><div className="flex justify-between text-sm font-semibold"><span className="flex items-center gap-2"><VocaPet awake={false} /><span>VOCA！ · Lv.{level}</span></span><span>{levelProgress} / 100 能量</span></div><div className="mt-2 h-4 overflow-hidden rounded-full border border-indigo-100 bg-indigo-50"><div className="h-full rounded-full bg-gradient-to-r from-indigo-500 via-violet-500 to-fuchsia-500 transition-all" style={{ width: `${levelProgress}%` }} /></div><p className="mt-1 text-xs text-slate-400">完成今日打卡可获得 20 能量，每 100 能量升一级</p></div>
       </div>
