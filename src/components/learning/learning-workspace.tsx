@@ -6,6 +6,7 @@ import Link from "next/link";
 import { matchesAnswer } from "@/lib/answer-matcher";
 import { VocabularyEntry } from "@/lib/domain";
 import { createClient } from "@/lib/supabase/client";
+import { isVocabularyTerm, parseVocabularyText } from "@/lib/vocabulary-parser";
 
 const supabase = createClient();
 
@@ -71,11 +72,18 @@ export function LearningWorkspace({ initialMode }: { initialMode: "memory" | "te
             .select("id, day_number, created_at")
             .eq("user_id", user.id).order("created_at", { ascending: false }),
         ]);
-        if (active) setCloudEntries((words.data ?? []).map((entry) => ({
-          id: entry.id, listId: entry.list_id, phrase: entry.term, meanings: entry.meaning.split(/[；;、]/).map((value: string) => value.trim()).filter(Boolean),
-          phonetic: entry.phonetic ?? undefined, partOfSpeech: entry.part_of_speech ?? undefined,
-          synonyms: entry.synonyms ?? [], antonyms: [], example: entry.example ?? undefined, memoryTip: entry.memory_tip ?? undefined,
-        })));
+        if (active) setCloudEntries((words.data ?? []).flatMap((entry) => {
+          const parsed = parseVocabularyText(`${entry.term}\t${entry.meaning}`)[0];
+          if (!parsed) return [];
+          const synonyms = [...new Set([...(entry.synonyms ?? []).flatMap((value: string) => value.split(/[,，;；、/]/)), ...parsed.synonyms]
+            .map((value: string) => value.trim()).filter(isVocabularyTerm))];
+          return [{
+            id: entry.id, listId: entry.list_id, phrase: parsed.term,
+            meanings: parsed.meaning.split(/[；;、]/).map((value: string) => value.trim()).filter(Boolean),
+            phonetic: entry.phonetic ?? undefined, partOfSpeech: entry.part_of_speech ?? undefined,
+            synonyms, antonyms: [], example: entry.example ?? undefined, memoryTip: entry.memory_tip ?? undefined,
+          }];
+        }));
         if (active) setDayLists(lists.data ?? []);
         if (active) setCorrectStreak(Object.fromEntries((answers.data ?? []).map((record) => [record.vocabulary_id, record.consecutive_correct])));
       }

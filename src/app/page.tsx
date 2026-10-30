@@ -15,6 +15,7 @@ const pendingImportKey = "voca.pendingImport";
 const today = new Date().toISOString().slice(0, 10);
 type StoredEntry = VocabularyEntry & { list_id: string };
 type StoredList = { id: string; day_number: number; created_at: string };
+type ImportPreview = { value: string; name: string; entries: VocabularyEntry[] };
 
 async function saveWords(userId: string, parsed: VocabularyEntry[], content: string, fileName: string) {
   const { data: existingLists, error: fetchError } = await supabase.from("vocabulary_lists")
@@ -27,8 +28,8 @@ async function saveWords(userId: string, parsed: VocabularyEntry[], content: str
     .select("id, day_number, created_at").single();
   if (listError || !list) return { data: [] as StoredEntry[], list: null as StoredList | null, error: listError?.message ?? "创建词表失败" };
   const { data, error } = await supabase.from("vocabulary_entries")
-    .insert(parsed.map((item) => ({ list_id: list.id, user_id: userId, term: item.term, meaning: item.meaning })))
-    .select("id, term, meaning, list_id");
+    .insert(parsed.map((item) => ({ list_id: list.id, user_id: userId, term: item.term, meaning: item.meaning, synonyms: item.synonyms })))
+    .select("id, term, meaning, synonyms, list_id");
   if (error) {
     await supabase.from("vocabulary_lists").delete().eq("id", list.id);
     return { data: [] as StoredEntry[], list: null, error: error.message };
@@ -44,6 +45,8 @@ export default function Home() {
   const [entries, setEntries] = useState<StoredEntry[]>([]);
   const [lists, setLists] = useState<StoredList[]>([]);
   const [source, setSource] = useState(sample);
+  const [previews, setPreviews] = useState<ImportPreview[]>([]);
+  const [savingPreview, setSavingPreview] = useState(false);
   const [view, setView] = useState<"home" | "library">("home");
   const [deleteTarget, setDeleteTarget] = useState<StoredEntry | null>(null);
   const [user, setUser] = useState<{ id: string; username: string } | null>(null);
@@ -67,7 +70,7 @@ export default function Home() {
       if (!authUser) { setUser(null); setEntries([]); setLists([]); return; }
       const [profile, words, savedLists, days] = await Promise.all([
         supabase.from("profiles").select("username").eq("id", authUser.id).single(),
-        supabase.from("vocabulary_entries").select("id, term, meaning, list_id").eq("user_id", authUser.id).order("created_at", { ascending: false }),
+        supabase.from("vocabulary_entries").select("id, term, meaning, synonyms, list_id").eq("user_id", authUser.id).order("created_at", { ascending: false }),
         supabase.from("vocabulary_lists").select("id, day_number, created_at").eq("user_id", authUser.id).order("created_at", { ascending: false }),
         supabase.from("study_days").select("study_date, energy_awarded").eq("user_id", authUser.id),
       ]);
@@ -99,10 +102,18 @@ export default function Home() {
     return () => { active = false; subscription.unsubscribe(); };
   }, []);
 
+  function previewWords(value: string, name = "") {
+    setSource(value);
+    const parsed = parseWords(value, name);
+    if (!parsed.length) { setStatus("没有识别到词汇；请检查文件中的英文、中文释义和表头。"); return; }
+    setPreviews((current) => [...current, { value, name, entries: parsed }]);
+    setStatus(`已识别 ${parsed.length} 个词汇，其中 ${parsed.filter((entry) => entry.synonyms.length).length} 个含同义词；请检查预览后确认保存。`);
+  }
+
   async function importWords(value: string, name = "") {
     setSource(value);
     const parsed = parseWords(value, name);
-    if (!parsed.length) { setStatus("没有识别到词汇；每行请填写“英文 空格 中文”。"); return; }
+    if (!parsed.length) { setStatus("没有识别到词汇；请检查文件中的英文、中文释义和表头。"); return false; }
     if (!user) {
       try {
         const pending = window.sessionStorage.getItem(pendingImportKey);
@@ -112,15 +123,27 @@ export default function Home() {
         setStatus(`已读取 ${parsed.length} 个单词；请登录，登录后会自动保存。`);
       } catch {
         setStatus(`已读取 ${parsed.length} 个单词；请登录后重新导入。`);
+        return false;
       }
-      return;
+      return true;
     }
     setStatus(`正在保存 ${parsed.length} 个单词…`);
     const { data, list, error } = await saveWords(user.id, parsed, value, name);
-    if (error) { setStatus(`保存失败：${error}`); return; }
+    if (error) { setStatus(`保存失败：${error}`); return false; }
     setEntries((current) => [...data, ...current]);
     if (list) setLists((current) => [list, ...current]);
     setStatus(`已保存到第${list?.day_number}天：${data.length} 个单词`);
+    return true;
+  }
+
+  async function confirmPreview() {
+    if (savingPreview || !previews.length) return;
+    setSavingPreview(true);
+    try {
+      if (await importWords(previews[0].value, previews[0].name)) setPreviews((current) => current.slice(1));
+    } finally {
+      setSavingPreview(false);
+    }
   }
 
   async function importFile(file: File) {
@@ -141,7 +164,7 @@ export default function Home() {
         if (!response.ok || !result.text) throw new Error(result.error ?? "Word 文件解析失败");
         value = result.text;
       } else value = await file.text();
-      await importWords(value, file.name);
+      previewWords(value, file.name);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "读取文件失败，请重试。");
     }
@@ -244,7 +267,14 @@ export default function Home() {
               <p className="mt-3 text-sm text-slate-500">从微信直接拖放若无反应，请先把 PDF 保存到电脑，再拖入或选择文件。</p>
               {!user && <p className="mt-3 rounded-xl bg-amber-50 px-3 py-2 text-sm text-amber-900">保存到云端需要先 <Link href="/auth" className="font-bold underline">登录账号</Link>；拖入的词汇会保留到登录后自动保存。</p>}
               <textarea value={source} onChange={(event) => setSource(event.target.value)} className="mt-5 min-h-48 w-full rounded-2xl border border-slate-200 bg-slate-50 p-4 font-mono text-sm" aria-label="词汇内容，可拖入 TXT、CSV、PDF 或 Word 文件" />
-              <button onClick={() => { void importWords(source); }} className="mt-4 rounded-xl border border-indigo-200 px-4 py-2 text-sm font-semibold text-indigo-700">解析并保存词汇</button>
+              <button onClick={() => previewWords(source)} className="mt-4 rounded-xl border border-indigo-200 px-4 py-2 text-sm font-semibold text-indigo-700">识别粘贴内容</button>
+              {previews.length > 0 && <div className="mt-5 rounded-2xl border border-indigo-200 bg-indigo-50 p-4">
+                <h3 className="font-bold text-indigo-900">导入预览：{previews[0].name || "粘贴内容"}（{previews[0].entries.length} 词）</h3>
+                {previews.length > 1 && <p className="mt-1 text-sm text-indigo-700">另有 {previews.length - 1} 个文件等待预览</p>}
+                <div className="mt-3 max-h-64 overflow-auto rounded-xl bg-white"><table className="w-full text-left text-sm"><thead><tr><th className="p-2">英文</th><th className="p-2">中文释义</th><th className="p-2">同义词</th></tr></thead><tbody>{previews[0].entries.slice(0, 20).map((entry) => <tr key={entry.id} className="border-t border-slate-100"><td className="p-2">{entry.term}</td><td className="p-2">{entry.meaning}</td><td className="p-2">{entry.synonyms.join("、") || "—"}</td></tr>)}</tbody></table></div>
+                {previews[0].entries.length > 20 && <p className="mt-2 text-xs text-slate-500">仅预览前 20 词，确认后保存全部词汇。</p>}
+                <div className="mt-4 flex gap-2"><button onClick={() => { void confirmPreview(); }} disabled={savingPreview} className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">{savingPreview ? "正在保存…" : "确认保存"}</button><button onClick={() => setPreviews((current) => current.slice(1))} disabled={savingPreview} className="rounded-xl border border-slate-300 px-4 py-2 text-sm disabled:opacity-50">取消</button></div>
+              </div>}
             </div>
             <div className="flex flex-col gap-4">
               <button onClick={() => setView("library")} className="flex-1 rounded-3xl bg-white p-7 text-left shadow-sm ring-1 ring-slate-200"><span className="text-sm font-semibold text-indigo-600">全部词汇</span><strong className="mt-3 block text-2xl">我的单词库 →</strong><span className="mt-2 block text-sm text-slate-400">查看并编辑所有单词</span></button>
