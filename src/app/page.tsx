@@ -5,19 +5,33 @@ import Link from "next/link";
 import { VocaPet } from "@/components/voca-pet";
 import { parseVocabularyCsv, parseVocabularyText, VocabularyEntry } from "@/lib/vocabulary-parser";
 import { extractPdfText } from "@/lib/pdf-vocabulary";
+import { detectDayNumber, nextDayNumber } from "@/lib/study-day";
 import { createClient } from "@/lib/supabase/client";
 
 const supabase = createClient();
 const sample = "abandon\t放弃；遗弃\naccurate\t准确的\ntake advantage of\t利用";
 const pendingImportKey = "voca.pendingImport";
+type StoredEntry = VocabularyEntry & { list_id: string };
+type StoredList = { id: string; day_number: number; created_at: string };
 
-async function saveWords(userId: string, parsed: VocabularyEntry[]) {
-  const { data: list, error: listError } = await supabase.from("vocabulary_lists").insert({ user_id: userId }).select("id").single();
-  if (listError || !list) return { data: [] as VocabularyEntry[], error: listError?.message ?? "创建词表失败" };
+async function saveWords(userId: string, parsed: VocabularyEntry[], content: string, fileName: string) {
+  const { data: existingLists, error: fetchError } = await supabase.from("vocabulary_lists")
+    .select("day_number").eq("user_id", userId);
+  if (fetchError) return { data: [] as StoredEntry[], list: null as StoredList | null, error: fetchError.message };
+  const dayNumber = detectDayNumber(content, fileName)
+    ?? nextDayNumber((existingLists ?? []).map((list) => list.day_number));
+  const { data: list, error: listError } = await supabase.from("vocabulary_lists")
+    .insert({ user_id: userId, day_number: dayNumber, title: `第${dayNumber}天` })
+    .select("id, day_number, created_at").single();
+  if (listError || !list) return { data: [] as StoredEntry[], list: null as StoredList | null, error: listError?.message ?? "创建词表失败" };
   const { data, error } = await supabase.from("vocabulary_entries")
     .insert(parsed.map((item) => ({ list_id: list.id, user_id: userId, term: item.term, meaning: item.meaning })))
-    .select("id, term, meaning");
-  return { data: data ?? [], error: error?.message ?? null };
+    .select("id, term, meaning, list_id");
+  if (error) {
+    await supabase.from("vocabulary_lists").delete().eq("id", list.id);
+    return { data: [] as StoredEntry[], list: null, error: error.message };
+  }
+  return { data: data ?? [], list, error: null };
 }
 
 function parseWords(value: string, name: string) {
@@ -25,16 +39,18 @@ function parseWords(value: string, name: string) {
 }
 
 export default function Home() {
-  const [entries, setEntries] = useState<VocabularyEntry[]>([]);
+  const [entries, setEntries] = useState<StoredEntry[]>([]);
+  const [lists, setLists] = useState<StoredList[]>([]);
   const [source, setSource] = useState(sample);
-  const [view, setView] = useState<"home" | "library" | "today">("home");
-  const [deleteTarget, setDeleteTarget] = useState<VocabularyEntry | null>(null);
+  const [view, setView] = useState<"home" | "library">("home");
+  const [deleteTarget, setDeleteTarget] = useState<StoredEntry | null>(null);
   const [user, setUser] = useState<{ id: string; username: string } | null>(null);
   const [status, setStatus] = useState("可拖拽 TXT、CSV、文字型 PDF，或直接粘贴内容");
   const [dragging, setDragging] = useState(false);
   const [energy, setEnergy] = useState(0);
   const level = Math.floor(energy / 100);
   const levelProgress = energy % 100;
+  const orderedDays = [...new Set(lists.map((list) => list.day_number))].sort((left, right) => left - right);
 
   useEffect(() => {
     window.localStorage.removeItem("wordkiller.auth.account");
@@ -43,27 +59,32 @@ export default function Home() {
     async function loadData() {
       const { data: { user: authUser } } = await supabase.auth.getUser();
       if (!active) return;
-      if (!authUser) { setUser(null); setEntries([]); return; }
-      const [profile, words, days] = await Promise.all([
+      if (!authUser) { setUser(null); setEntries([]); setLists([]); return; }
+      const [profile, words, savedLists, days] = await Promise.all([
         supabase.from("profiles").select("username").eq("id", authUser.id).single(),
-        supabase.from("vocabulary_entries").select("id, term, meaning").eq("user_id", authUser.id).order("created_at", { ascending: false }),
+        supabase.from("vocabulary_entries").select("id, term, meaning, list_id").eq("user_id", authUser.id).order("created_at", { ascending: false }),
+        supabase.from("vocabulary_lists").select("id, day_number, created_at").eq("user_id", authUser.id).order("created_at", { ascending: false }),
         supabase.from("study_days").select("energy_awarded").eq("user_id", authUser.id),
       ]);
       if (!active) return;
       setUser({ id: authUser.id, username: profile.data?.username ?? authUser.email ?? "用户" });
       setEntries(words.data ?? []);
+      setLists(savedLists.data ?? []);
       setEnergy((days.data ?? []).reduce((sum, day) => sum + day.energy_awarded, 0));
       const pending = window.sessionStorage.getItem(pendingImportKey);
       if (pending) {
         window.sessionStorage.removeItem(pendingImportKey);
-        const { value, name } = JSON.parse(pending) as { value: string; name: string };
-        setSource(value);
-        const { data, error } = await saveWords(authUser.id, parseWords(value, name));
-        if (!active) return;
-        if (error) setStatus(`保存失败：${error}`);
-        else {
-          setEntries((current) => [...data, ...current]);
-          setStatus(`已保存 ${data.length} 个单词到云端`);
+        const parsedPending = JSON.parse(pending) as { value: string; name: string } | { value: string; name: string }[];
+        for (const { value, name } of Array.isArray(parsedPending) ? parsedPending : [parsedPending]) {
+          setSource(value);
+          const { data, list, error } = await saveWords(authUser.id, parseWords(value, name), value, name);
+          if (!active) return;
+          if (error) setStatus(`保存失败：${error}`);
+          else {
+            setEntries((current) => [...data, ...current]);
+            if (list) setLists((current) => [list, ...current]);
+            setStatus(`已保存到第${list?.day_number}天：${data.length} 个单词`);
+          }
         }
       }
     }
@@ -78,7 +99,10 @@ export default function Home() {
     if (!parsed.length) { setStatus("没有识别到词汇；每行请填写“英文 空格 中文”。"); return; }
     if (!user) {
       try {
-        window.sessionStorage.setItem(pendingImportKey, JSON.stringify({ value, name }));
+        const pending = window.sessionStorage.getItem(pendingImportKey);
+        const previous = pending ? JSON.parse(pending) as { value: string; name: string } | { value: string; name: string }[] : [];
+        const pendingFiles = Array.isArray(previous) ? previous : [previous];
+        window.sessionStorage.setItem(pendingImportKey, JSON.stringify([...pendingFiles, { value, name }]));
         setStatus(`已读取 ${parsed.length} 个单词；请登录，登录后会自动保存。`);
       } catch {
         setStatus(`已读取 ${parsed.length} 个单词；请登录后重新导入。`);
@@ -86,10 +110,11 @@ export default function Home() {
       return;
     }
     setStatus(`正在保存 ${parsed.length} 个单词…`);
-    const { data, error } = await saveWords(user.id, parsed);
+    const { data, list, error } = await saveWords(user.id, parsed, value, name);
     if (error) { setStatus(`保存失败：${error}`); return; }
     setEntries((current) => [...data, ...current]);
-    setStatus(`已保存 ${data.length} 个单词到云端`);
+    if (list) setLists((current) => [list, ...current]);
+    setStatus(`已保存到第${list?.day_number}天：${data.length} 个单词`);
   }
 
   async function importFile(file: File) {
@@ -108,8 +133,8 @@ export default function Home() {
   }
 
   function handleFile(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    if (file) void importFile(file);
+    const files = Array.from(event.target.files ?? []);
+    if (files.length) void (async () => { for (const file of files) await importFile(file); })();
     event.target.value = "";
   }
 
@@ -124,9 +149,9 @@ export default function Home() {
       event.preventDefault();
       setDragging(false);
       const transfer = event.dataTransfer;
-      const file = transfer?.files[0] ?? Array.from(transfer?.items ?? [])
-        .find((item) => item.kind === "file")?.getAsFile();
-      if (file) void importFile(file);
+      const files = transfer?.files.length ? Array.from(transfer.files) : Array.from(transfer?.items ?? [])
+        .filter((item) => item.kind === "file").map((item) => item.getAsFile()).filter((file): file is File => Boolean(file));
+      if (files?.length) void (async () => { for (const file of files) await importFile(file); })();
       else setStatus("未收到文件。若从微信拖入，请先在微信中保存 PDF，再从文件管理器拖入或点击“选择文件”。");
     }
 
@@ -170,6 +195,7 @@ export default function Home() {
     await supabase.auth.signOut();
     setUser(null);
     setEntries([]);
+    setLists([]);
   }
 
   return (
@@ -179,7 +205,7 @@ export default function Home() {
           <Link href="/" className="text-4xl font-black tracking-[0.12em] text-indigo-600">VOCA！</Link>
           <div className="flex items-center gap-2 text-sm font-semibold">
             <button onClick={() => setView("home")} className="rounded-lg px-3 py-2 text-slate-600">主页</button>
-            <Link href="/learn" className="rounded-lg px-3 py-2 text-slate-600">单词测试</Link>
+            <Link href="/learn?mode=test" className="rounded-lg px-3 py-2 text-slate-600">单词测试</Link>
             <Link href="/review" className="rounded-lg px-3 py-2 text-slate-600">错题库</Link>
             {user ? (
               <details className="relative ml-2">
@@ -198,8 +224,8 @@ export default function Home() {
           <section className="grid gap-5 lg:grid-cols-[1fr_0.8fr]">
             <div className={`rounded-3xl border bg-white p-6 shadow-sm ${dragging ? "border-indigo-500 bg-indigo-50 ring-2 ring-indigo-200" : "border-slate-200"}`}>
               <div className="flex items-center justify-between">
-                <div><h2 className="text-xl font-bold">上传今日词汇</h2><p className="mt-1 text-sm text-slate-500" role="status">{dragging ? "松开即可导入文件" : status}</p></div>
-                <label className="cursor-pointer rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white">选择文件<input className="hidden" type="file" accept=".txt,.csv,.pdf,application/pdf" onChange={handleFile} /></label>
+                <div><h2 className="text-xl font-bold">导入单词文件</h2><p className="mt-1 text-sm text-slate-500" role="status">{dragging ? "松开即可导入文件" : status}</p></div>
+                <label className="cursor-pointer rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white">选择文件<input className="hidden" type="file" multiple accept=".txt,.csv,.pdf,application/pdf" onChange={handleFile} /></label>
               </div>
               <p className="mt-3 text-sm text-slate-500">从微信直接拖放若无反应，请先把 PDF 保存到电脑，再拖入或选择文件。</p>
               {!user && <p className="mt-3 rounded-xl bg-amber-50 px-3 py-2 text-sm text-amber-900">保存到云端需要先 <Link href="/auth" className="font-bold underline">登录账号</Link>；拖入的词汇会保留到登录后自动保存。</p>}
@@ -208,16 +234,21 @@ export default function Home() {
             </div>
             <div className="flex flex-col gap-4">
               <button onClick={() => setView("library")} className="flex-1 rounded-3xl bg-white p-7 text-left shadow-sm ring-1 ring-slate-200"><span className="text-sm font-semibold text-indigo-600">全部词汇</span><strong className="mt-3 block text-2xl">我的单词库 →</strong><span className="mt-2 block text-sm text-slate-400">查看并编辑所有单词</span></button>
-              <Link href="/learn" className="flex-1 rounded-3xl bg-slate-900 p-7 text-left text-white"><span className="text-sm font-semibold text-indigo-300">今日新导入</span><strong className="mt-3 block text-2xl">开始背诵 →</strong><span className="mt-2 block text-sm text-indigo-300">进入今日单词表</span></Link>
+              <Link href="/learn?mode=memory" className="flex-1 rounded-3xl bg-slate-900 p-7 text-left text-white"><span className="text-sm font-semibold text-indigo-300">单词背诵</span><strong className="mt-3 block text-2xl">开始背诵 →</strong><span className="mt-2 block text-sm text-indigo-300">选择今日或指定天数</span></Link>
+              <Link href="/learn?mode=test" className="flex-1 rounded-3xl bg-white p-7 text-left shadow-sm ring-1 ring-slate-200"><span className="text-sm font-semibold text-indigo-600">单词测试</span><strong className="mt-3 block text-2xl">开始测试 →</strong><span className="mt-2 block text-sm text-slate-400">选择今日或指定天数</span></Link>
             </div>
           </section>
         )}
-        {(view === "library" || view === "today") && (
+        {view === "library" && (
           <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
             <div className="mb-5 flex items-center justify-between"><h2 className="text-2xl font-bold">我的单词库</h2><button onClick={() => setView("home")} className="rounded-xl border border-slate-200 px-4 py-2 text-sm">返回主页</button></div>
-            <div className="overflow-x-auto"><table className="w-full min-w-[600px] text-left text-sm"><thead className="border-b text-xs text-slate-400"><tr><th className="p-3">#</th><th className="p-3">英文 / 短语</th><th className="p-3">中文释义</th><th className="p-3">操作</th></tr></thead><tbody>
-              {entries.map((entry, index) => <tr key={entry.id} className="border-b border-slate-50"><td className="p-3 text-slate-400">{index + 1}</td><td className="p-3"><input value={entry.term} onChange={(event) => setEntries((current) => current.map((item) => item.id === entry.id ? { ...item, term: event.target.value } : item))} onBlur={(event) => { void updateEntry(entry.id, "term", event.target.value); }} className="w-full rounded-lg px-2 py-2 font-semibold" /></td><td className="p-3"><input value={entry.meaning} onChange={(event) => setEntries((current) => current.map((item) => item.id === entry.id ? { ...item, meaning: event.target.value } : item))} onBlur={(event) => { void updateEntry(entry.id, "meaning", event.target.value); }} className="w-full rounded-lg px-2 py-2 text-slate-600" /></td><td className="p-3"><button type="button" onClick={() => setDeleteTarget(entry)} className="font-semibold text-rose-600">删除</button></td></tr>)}
-            </tbody></table></div>
+            {orderedDays.map((day) => {
+              const listIds = new Set(lists.filter((list) => list.day_number === day).map((list) => list.id));
+              const dayEntries = entries.filter((entry) => listIds.has(entry.list_id));
+              return <div key={day} className="mb-7"><h3 className="mb-3 rounded-xl bg-indigo-50 px-4 py-3 text-lg font-bold text-indigo-700">第{day}天 <span className="text-sm font-normal">· {dayEntries.length} 个单词</span></h3><div className="overflow-x-auto"><table className="w-full min-w-[600px] text-left text-sm"><thead className="border-b text-xs text-slate-400"><tr><th className="p-3">#</th><th className="p-3">英文 / 短语</th><th className="p-3">中文释义</th><th className="p-3">操作</th></tr></thead><tbody>
+                {dayEntries.map((entry, index) => <tr key={entry.id} className="border-b border-slate-50"><td className="p-3 text-slate-400">{index + 1}</td><td className="p-3"><input value={entry.term} onChange={(event) => setEntries((current) => current.map((item) => item.id === entry.id ? { ...item, term: event.target.value } : item))} onBlur={(event) => { void updateEntry(entry.id, "term", event.target.value); }} className="w-full rounded-lg px-2 py-2 font-semibold" /></td><td className="p-3"><input value={entry.meaning} onChange={(event) => setEntries((current) => current.map((item) => item.id === entry.id ? { ...item, meaning: event.target.value } : item))} onBlur={(event) => { void updateEntry(entry.id, "meaning", event.target.value); }} className="w-full rounded-lg px-2 py-2 text-slate-600" /></td><td className="p-3"><button type="button" onClick={() => setDeleteTarget(entry)} className="font-semibold text-rose-600">删除</button></td></tr>)}
+              </tbody></table></div></div>;
+            })}
             {!entries.length && <p className="p-4 text-slate-400">还没有词汇。登录后从主页导入。</p>}
             {status.startsWith("保存失败") || status.startsWith("删除失败") ? <p role="status" className="text-rose-600">{status}</p> : null}
           </section>
