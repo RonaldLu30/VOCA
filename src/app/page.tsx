@@ -28,8 +28,8 @@ async function saveWords(userId: string, parsed: VocabularyEntry[], content: str
     .select("id, day_number, created_at").single();
   if (listError || !list) return { data: [] as StoredEntry[], list: null as StoredList | null, error: listError?.message ?? "创建词表失败" };
   const { data, error } = await supabase.from("vocabulary_entries")
-    .insert(parsed.map((item) => ({ list_id: list.id, user_id: userId, term: item.term, meaning: item.meaning, synonyms: item.synonyms })))
-    .select("id, term, meaning, synonyms, list_id");
+    .insert(parsed.map((item) => ({ list_id: list.id, user_id: userId, term: item.term, meaning: item.meaning, synonyms: item.synonyms, phonetic: item.phonetic ?? null })))
+    .select("id, term, meaning, synonyms, phonetic, list_id");
   if (error) {
     await supabase.from("vocabulary_lists").delete().eq("id", list.id);
     return { data: [] as StoredEntry[], list: null, error: error.message };
@@ -77,7 +77,7 @@ export default function Home() {
       if (!authUser) { setUser(null); setEntries([]); setLists([]); return; }
       const [profile, words, savedLists, days] = await Promise.all([
         supabase.from("profiles").select("username").eq("id", authUser.id).single(),
-        supabase.from("vocabulary_entries").select("id, term, meaning, synonyms, list_id").eq("user_id", authUser.id).order("created_at", { ascending: false }),
+        supabase.from("vocabulary_entries").select("id, term, meaning, synonyms, phonetic, list_id").eq("user_id", authUser.id).order("created_at", { ascending: false }),
         supabase.from("vocabulary_lists").select("id, day_number, created_at").eq("user_id", authUser.id).order("created_at", { ascending: false }),
         supabase.from("study_days").select("study_date, energy_awarded").eq("user_id", authUser.id),
       ]);
@@ -222,7 +222,7 @@ export default function Home() {
     };
   });
 
-  async function updateEntry(id: string, field: "term" | "meaning", value: string) {
+  async function updateEntry(id: string, field: "term" | "meaning" | "phonetic", value: string) {
     setEntries((current) => current.map((item) => item.id === id ? { ...item, [field]: value } : item));
     const { error } = await supabase.from("vocabulary_entries").update({ [field]: value }).eq("id", id);
     if (error) setStatus(`保存失败：${error.message}`);
@@ -350,7 +350,7 @@ export default function Home() {
               {previews.length > 0 && <div className="mt-5 rounded-2xl border border-indigo-200 bg-indigo-50 p-4">
                 <h3 className="font-bold text-indigo-900">导入预览：{previews[0].name || "粘贴内容"}（{previews[0].entries.length} 词）</h3>
                 {previews.length > 1 && <p className="mt-1 text-sm text-indigo-700">另有 {previews.length - 1} 个文件等待预览</p>}
-                <div className="mt-3 max-h-64 overflow-auto rounded-xl bg-white"><table className="w-full text-left text-sm"><thead><tr><th className="p-2">英文</th><th className="p-2">中文释义</th><th className="p-2">同义词</th></tr></thead><tbody>{previews[0].entries.slice(0, 20).map((entry) => <tr key={entry.id} className="border-t border-slate-100"><td className="p-2">{entry.term}</td><td className="p-2">{entry.meaning}</td><td className="p-2">{entry.synonyms.join("、") || "—"}</td></tr>)}</tbody></table></div>
+                <div className="mt-3 max-h-64 overflow-auto rounded-xl bg-white"><table className="w-full text-left text-sm"><thead><tr><th className="p-2">英文</th><th className="p-2">音标</th><th className="p-2">中文释义</th><th className="p-2">同义词</th></tr></thead><tbody>{previews[0].entries.slice(0, 20).map((entry) => <tr key={entry.id} className="border-t border-slate-100"><td className="p-2">{entry.term}</td><td className="p-2">{entry.phonetic || "—"}</td><td className="p-2">{entry.meaning}</td><td className="p-2">{entry.synonyms.join("、") || "—"}</td></tr>)}</tbody></table></div>
                 {previews[0].entries.length > 20 && <p className="mt-2 text-xs text-slate-500">仅预览前 20 词，确认后保存全部词汇。</p>}
                 <div className="mt-4 flex gap-2"><button onClick={() => { void confirmPreview(); }} disabled={savingPreview} className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">{savingPreview ? "正在保存…" : "确认保存"}</button><button onClick={() => setPreviews((current) => current.slice(1))} disabled={savingPreview} className="rounded-xl border border-slate-300 px-4 py-2 text-sm disabled:opacity-50">取消</button></div>
               </div>}
@@ -369,8 +369,8 @@ export default function Home() {
             {orderedDays.map((day) => {
               const listIds = new Set(lists.filter((list) => list.day_number === day).map((list) => list.id));
               const dayEntries = entries.filter((entry) => listIds.has(entry.list_id));
-              return <div key={day} className="mb-7"><div className="mb-3 flex items-center justify-between rounded-xl bg-indigo-50 px-4 py-3 text-indigo-700"><h3 className="text-lg font-bold">第{day}天 <span className="text-sm font-normal">· {dayEntries.length} 个单词</span></h3><button type="button" onClick={() => openDayEditor(day)} className="rounded-lg bg-white px-3 py-1 text-sm font-semibold shadow-sm">编辑</button></div><div className="overflow-x-auto"><table className="w-full min-w-[600px] text-left text-sm"><thead className="border-b text-xs text-slate-400"><tr><th className="p-3">#</th><th className="p-3">英文 / 短语</th><th className="p-3">中文释义</th><th className="p-3">操作</th></tr></thead><tbody>
-                {dayEntries.map((entry, index) => <tr key={entry.id} className="border-b border-slate-50"><td className="p-3 text-slate-400">{index + 1}</td><td className="p-3"><input value={entry.term} onChange={(event) => setEntries((current) => current.map((item) => item.id === entry.id ? { ...item, term: event.target.value } : item))} onBlur={(event) => { void updateEntry(entry.id, "term", event.target.value); }} className="w-full rounded-lg px-2 py-2 font-semibold" /></td><td className="p-3"><input value={entry.meaning} onChange={(event) => setEntries((current) => current.map((item) => item.id === entry.id ? { ...item, meaning: event.target.value } : item))} onBlur={(event) => { void updateEntry(entry.id, "meaning", event.target.value); }} className="w-full rounded-lg px-2 py-2 text-slate-600" /></td><td className="p-3"><button type="button" onClick={() => setDeleteTarget(entry)} className="font-semibold text-rose-600">删除</button></td></tr>)}
+              return <div key={day} className="mb-7"><div className="mb-3 flex items-center justify-between rounded-xl bg-indigo-50 px-4 py-3 text-indigo-700"><h3 className="text-lg font-bold">第{day}天 <span className="text-sm font-normal">· {dayEntries.length} 个单词</span></h3><button type="button" onClick={() => openDayEditor(day)} className="rounded-lg bg-white px-3 py-1 text-sm font-semibold shadow-sm">编辑</button></div><div className="overflow-x-auto"><table className="w-full min-w-[700px] text-left text-sm"><thead className="border-b text-xs text-slate-400"><tr><th className="p-3">#</th><th className="p-3">英文 / 短语</th><th className="p-3">音标</th><th className="p-3">中文释义</th><th className="p-3">操作</th></tr></thead><tbody>
+                {dayEntries.map((entry, index) => <tr key={entry.id} className="border-b border-slate-50"><td className="p-3 text-slate-400">{index + 1}</td><td className="p-3"><input value={entry.term} onChange={(event) => setEntries((current) => current.map((item) => item.id === entry.id ? { ...item, term: event.target.value } : item))} onBlur={(event) => { void updateEntry(entry.id, "term", event.target.value); }} className="w-full rounded-lg px-2 py-2 font-semibold" /></td><td className="p-3"><input value={entry.phonetic ?? ""} onChange={(event) => setEntries((current) => current.map((item) => item.id === entry.id ? { ...item, phonetic: event.target.value } : item))} onBlur={(event) => { void updateEntry(entry.id, "phonetic", event.target.value); }} placeholder="可补录" className="w-full rounded-lg px-2 py-2 text-indigo-600" /></td><td className="p-3"><input value={entry.meaning} onChange={(event) => setEntries((current) => current.map((item) => item.id === entry.id ? { ...item, meaning: event.target.value } : item))} onBlur={(event) => { void updateEntry(entry.id, "meaning", event.target.value); }} className="w-full rounded-lg px-2 py-2 text-slate-600" /></td><td className="p-3"><button type="button" onClick={() => setDeleteTarget(entry)} className="font-semibold text-rose-600">删除</button></td></tr>)}
               </tbody></table></div></div>;
             })}
             {!entries.length && <p className="p-4 text-slate-400">还没有词汇。登录后从主页导入。</p>}

@@ -1,9 +1,8 @@
 export function normalizeAnswer(value: string) {
   return value
-    .trim()
+    .normalize("NFKC")
     .toLocaleLowerCase()
-    .replace(/[\u2010-\u2015]/g, "-")
-    .replace(/[\s\u3000]+/g, " ")
+    .replace(/[\s\u3000\-\u2010-\u2015_']/g, "")
     .replace(/[.,!?;:，。！？；：]+$/g, "");
 }
 

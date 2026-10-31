@@ -3,9 +3,10 @@ export type VocabularyEntry = {
   term: string;
   meaning: string;
   synonyms: string[];
+  phonetic?: string;
 };
 
-type TableColumns = { term: number; meaning: number; synonyms: number };
+type TableColumns = { term: number; meaning: number; synonyms: number; phonetic: number };
 
 const separators = /\s*(?:\t+|\s+[-—–:]\s+|\s*,\s*|\s{2,}|\s+(?=[\u3400-\u9fff]))\s*/;
 const chinese = /[\u3400-\u9fff]/;
@@ -33,9 +34,15 @@ function parseSynonyms(value: string) {
     .filter(isVocabularyTerm))];
 }
 
+function extractPhonetic(value: string) {
+  const match = value.match(/(?:^|\s)(\/[^/\n]{2,80}\/|\[[^\]\n]{2,80}\])(?=\s|$)/);
+  return match ? { phonetic: match[1], rest: value.replace(match[0], " ").trim() } : { phonetic: "", rest: value };
+}
+
 function headerKind(value: string) {
   const header = value.toLowerCase().replace(/[\s:：()（）\[\]【】/\\_-]/g, "");
   if (/^(?:目录|章节|分类|单元|序号|编号|页码|category|section|chapter|unit|number|no)$/.test(header)) return null;
+  if (/音标|读音|发音/.test(header) || /^(?:phonetic|pronunciation|ipa|transcription)$/.test(header)) return "phonetic";
   if (/同义|近义|替换/.test(header) || /^(?:synonyms?|similarwords?|equivalentexpressions?)$/.test(header)) return "synonyms";
   if (/中文|汉语|释义|翻译|词义|意思|含义|解释/.test(header) || /^(?:meanings?|translations?|definitions?|chinese(?:meanings?|translations?)?)$/.test(header)) return "meaning";
   if (/英文|英语|单词|词条|词汇|词组|短语/.test(header) || /^(?:english(?:words?|phrases?|expressions?|wordphrase)?|words?|wordphrase|vocabulary|vocab|terms?|phrases?|expressions?)$/.test(header)) return "term";
@@ -47,7 +54,7 @@ function readHeaders(cells: string[]): TableColumns | null {
   const term = headers.indexOf("term");
   const meaning = headers.indexOf("meaning");
   if (term < 0 || meaning < 0) return null;
-  return { term, meaning, synonyms: headers.indexOf("synonyms") };
+  return { term, meaning, synonyms: headers.indexOf("synonyms"), phonetic: headers.indexOf("phonetic") };
 }
 
 export function parseVocabularyText(input: string): VocabularyEntry[] {
@@ -75,10 +82,12 @@ export function parseVocabularyText(input: string): VocabularyEntry[] {
     let term = "";
     let meaning = "";
     let synonymText = "";
+    let phonetic = "";
     if (cells.length > 1 && tableColumns && cells.length > Math.max(tableColumns.term, tableColumns.meaning)) {
       term = cells[tableColumns.term];
       meaning = cells[tableColumns.meaning];
       if (tableColumns.synonyms >= 0) synonymText = cells[tableColumns.synonyms] ?? "";
+      if (tableColumns.phonetic >= 0) phonetic = cells[tableColumns.phonetic] ?? "";
     } else if (cells.length > 1) {
       for (let position = cells.length - 1; position >= 0; position -= 1) {
         if (!isVocabularyTerm(normalizeTerm(cells[position]))) continue;
@@ -87,6 +96,8 @@ export function parseVocabularyText(input: string): VocabularyEntry[] {
           term = cells[position];
           meaning = cells[meaningIndex];
           synonymText = cells.slice(meaningIndex + 1).join(";");
+          const phoneticCell = cells.find((cell) => extractPhonetic(cell).phonetic);
+          phonetic = phoneticCell ? extractPhonetic(phoneticCell).phonetic : "";
           break;
         }
       }
@@ -101,7 +112,12 @@ export function parseVocabularyText(input: string): VocabularyEntry[] {
       }
     }
 
-    term = normalizeTerm(term);
+    const termPhonetic = extractPhonetic(term);
+    term = normalizeTerm(termPhonetic.rest);
+    phonetic ||= termPhonetic.phonetic;
+    const meaningPhonetic = extractPhonetic(meaning);
+    meaning = meaningPhonetic.rest;
+    phonetic ||= meaningPhonetic.phonetic;
     const synonymMatch = meaning.match(synonymLabel);
     if (synonymMatch?.index !== undefined) {
       synonymText += `;${meaning.slice(synonymMatch.index + synonymMatch[0].length)}`;
@@ -116,9 +132,10 @@ export function parseVocabularyText(input: string): VocabularyEntry[] {
     const existing = seen.get(id);
     if (existing) {
       existing.synonyms = [...new Set([...existing.synonyms, ...synonyms])];
+      existing.phonetic ||= phonetic || undefined;
       continue;
     }
-    const entry = { id, term, meaning, synonyms };
+    const entry = { id, term, meaning, synonyms, phonetic: phonetic || undefined };
     seen.set(id, entry);
     entries.push(entry);
   }

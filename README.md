@@ -22,6 +22,10 @@ TXT, CSV, text-based PDF, DOCX, and DOC files can be imported. The importer reco
 
 In the vocabulary library, choose **编辑** on a day to move its words to another day number or delete the entire day. Moving to an existing day merges the groups. Deleting a day also removes its study records and shifts later day numbers down by one.
 
+In test mode, answer matching ignores letter case, spaces, apostrophes, and hyphens. Press Enter to submit, then Enter again for the next word. The progress counter shows distinct words mastered in the current test; a missed word must be answered correctly three times in its retry rounds before it counts. The completion dialog appears once every word in the selected list is mastered. Completing the "today" list records today's check-in.
+
+The importer keeps phonetic transcriptions from a phonetic column or inline `/.../` and `[...]` notation. Previously imported words without stored phonetics can be filled in from the library's phonetic column.
+
 You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.

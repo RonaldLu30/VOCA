@@ -50,6 +50,9 @@ export function LearningWorkspace({ initialMode }: { initialMode: "memory" | "te
   const [showStarredOnly, setShowStarredOnly] = useState(false);
   const [testQueue, setTestQueue] = useState<VocabularyEntry[]>([]);
   const [retryRounds, setRetryRounds] = useState<Record<string, number>>({});
+  const [masteredIds, setMasteredIds] = useState<string[]>([]);
+  const [testComplete, setTestComplete] = useState(false);
+  const [completionSaving, setCompletionSaving] = useState(false);
   const answerInputRef = useRef<HTMLInputElement>(null);
   const [showLeaveDialog, setShowLeaveDialog] = useState(false);
   const todayDay = dayLists[0]?.day_number;
@@ -96,7 +99,7 @@ export function LearningWorkspace({ initialMode }: { initialMode: "memory" | "te
             return [{
               id: entry.id, listId: entry.list_id, phrase: parsed.term,
               meanings: parsed.meaning.split(/[；;、]/).map((value: string) => value.trim()).filter(Boolean),
-              phonetic: entry.phonetic ?? undefined, partOfSpeech: entry.part_of_speech ?? undefined,
+              phonetic: entry.phonetic || parsed.phonetic, partOfSpeech: entry.part_of_speech ?? undefined,
               synonyms, antonyms: [], example: entry.example ?? undefined, memoryTip: entry.memory_tip ?? undefined,
             }];
           }));
@@ -118,7 +121,22 @@ export function LearningWorkspace({ initialMode }: { initialMode: "memory" | "te
     if (mode === "test" && started && !result) answerInputRef.current?.focus();
   }, [mode, started, index, result]);
 
+  useEffect(() => {
+    if (mode !== "test" || !started || !result || testComplete) return;
+    function advanceOnEnter(event: globalThis.KeyboardEvent) {
+      if (event.key !== "Enter" || event.isComposing || event.repeat) return;
+      event.preventDefault();
+      next();
+    }
+    window.addEventListener("keydown", advanceOnEnter, true);
+    return () => window.removeEventListener("keydown", advanceOnEnter, true);
+  });
+
   function next() {
+    if (mode === "test" && masteredIds.length === entries.length && entries.length > 0) {
+      setTestComplete(true);
+      return;
+    }
     setIndex((value) => {
       const length = mode === "test" ? testQueue.length : memoryEntries.length;
       return length ? (value + 1) % length : 0;
@@ -144,6 +162,9 @@ export function LearningWorkspace({ initialMode }: { initialMode: "memory" | "te
     setResult(null);
     setTestQueue([]);
     setRetryRounds({});
+    setMasteredIds([]);
+    setTestComplete(false);
+    setSaveError(null);
   }
 
   function toggleStar(entry: VocabularyEntry) {
@@ -157,6 +178,9 @@ export function LearningWorkspace({ initialMode }: { initialMode: "memory" | "te
   function beginStudy() {
     setIndex(0);
     setRetryRounds({});
+    setMasteredIds([]);
+    setTestComplete(false);
+    setSaveError(null);
     setTestQueue(mode === "test" ? [...entries] : []);
     setStarted(true);
   }
@@ -176,6 +200,8 @@ export function LearningWorkspace({ initialMode }: { initialMode: "memory" | "te
     const correct = matchesAnswer(answer, acceptedAnswers);
     const previousRetryRound = retryRounds[current.id];
     const nextRetryRound = correct ? (previousRetryRound ?? 0) + 1 : 0;
+    const justMastered = correct && (previousRetryRound === undefined || nextRetryRound >= 3) && !masteredIds.includes(current.id);
+    const completed = justMastered && masteredIds.length + 1 === entries.length;
     setResult({ answer, correct });
     setCorrectStreak((previous) => ({ ...previous, [current.id]: correct ? (previous[current.id] ?? 0) + 1 : 0 }));
     if (!correct) {
@@ -187,23 +213,35 @@ export function LearningWorkspace({ initialMode }: { initialMode: "memory" | "te
     } else if (previousRetryRound !== undefined) {
       setRetryRounds((previous) => { const next = { ...previous }; delete next[current.id]; return next; });
     }
+    if (justMastered) {
+      setMasteredIds((previous) => previous.includes(current.id) ? previous : [...previous, current.id]);
+      if (completed) setTestComplete(true);
+    }
     if (userId) {
-      const consecutiveCorrect = correct ? (correctStreak[current.id] ?? 0) + 1 : 0;
-      const { error } = await supabase.from("study_records").insert({
-        user_id: userId, vocabulary_id: current.id, answer, correct, consecutive_correct: consecutiveCorrect,
-        status: consecutiveCorrect >= 3 ? "mastered" : "learning",
-      });
-      if (error) setSaveError(error.message);
+      if (completed) setCompletionSaving(true);
+      try {
+        const consecutiveCorrect = correct ? (correctStreak[current.id] ?? 0) + 1 : 0;
+        const { error } = await supabase.from("study_records").insert({
+          user_id: userId, vocabulary_id: current.id, answer, correct, consecutive_correct: consecutiveCorrect,
+          status: consecutiveCorrect >= 3 ? "mastered" : "learning",
+        });
+        if (error) setSaveError(error.message);
+        if (completed && selectedDay === "today" && !error) {
+          const studyDate = new Date().toISOString().slice(0, 10);
+          const { error: dayError } = await supabase.from("study_days")
+            .upsert({ user_id: userId, study_date: studyDate }, { onConflict: "user_id,study_date", ignoreDuplicates: true });
+          if (dayError) setSaveError(`今日打卡保存失败：${dayError.message}`);
+        }
+      } catch {
+        setSaveError("记录保存失败，请检查网络后重试");
+      } finally {
+        if (completed) setCompletionSaving(false);
+      }
     }
   }
 
   function handleKeyDown(event: KeyboardEvent<HTMLInputElement>) {
-    if (event.key === "Enter" && !event.shiftKey && result) {
-      event.preventDefault();
-      next();
-      return;
-    }
-    if (event.key === "Enter" && event.shiftKey) {
+    if (event.key === "Enter" && event.shiftKey && !result) {
       event.preventDefault();
       void submit();
     }
@@ -242,8 +280,8 @@ export function LearningWorkspace({ initialMode }: { initialMode: "memory" | "te
             <button type="button" onClick={() => setStarted(false)} className="mt-3 text-sm font-semibold text-indigo-600">切换学习天数</button>
           </div>
           <div className="rounded-2xl border border-indigo-100 bg-white px-4 py-3 text-right shadow-sm">
-            <p className="text-xs text-slate-400">当前词条</p>
-            <p className="text-2xl font-bold text-indigo-600">{index + 1} / {entries.length}</p>
+            <p className="text-xs text-slate-400">{mode === "test" ? "已掌握" : "当前词条"}</p>
+            <p className="text-2xl font-bold text-indigo-600">{mode === "test" ? masteredIds.length : index + 1} / {entries.length}</p>
           </div>
         </header>
         {mode === "memory" ? (
@@ -271,7 +309,7 @@ export function LearningWorkspace({ initialMode }: { initialMode: "memory" | "te
           <section className="rounded-3xl border border-slate-200 bg-white p-7 shadow-sm sm:p-10">
             <div className="mb-8 flex items-center justify-between"><span className="text-sm font-semibold text-slate-400">第 {index + 1} 题</span><span className="rounded-full bg-rose-50 px-3 py-1 text-xs font-semibold text-rose-700">中文提示</span></div>
             <p className="text-3xl font-bold tracking-tight sm:text-5xl">{current.meanings.join("；")}</p>
-            <p className="mt-3 text-sm text-slate-400">输入英文单词或短语，按 Shift + Enter 提交</p>
+            <p className="mt-3 text-sm text-slate-400">输入英文单词或短语，按 Enter 提交；查看结果后按 Enter 换题</p>
             <form onSubmit={(event) => { void submit(event); }} className="mt-8">
               <input ref={answerInputRef} autoFocus value={answer} onChange={(event) => setAnswer(event.target.value)} onKeyDown={handleKeyDown} disabled={Boolean(result)} placeholder="输入英文答案" className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-5 py-4 text-xl outline-none transition focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100 disabled:opacity-70" />
               <button type="submit" disabled={!answer.trim() || Boolean(result)} className="mt-4 w-full rounded-xl bg-indigo-600 px-5 py-3 font-semibold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-slate-200">确认答案</button>
@@ -281,6 +319,7 @@ export function LearningWorkspace({ initialMode }: { initialMode: "memory" | "te
           </section>
         )}
         {showLeaveDialog && <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/35 px-5"><div role="dialog" aria-modal="true" className="w-full max-w-md rounded-3xl bg-white p-7 shadow-2xl"><h2 className="text-xl font-bold text-slate-900">确认离开{mode === "memory" ? "背诵" : "测试"}？</h2><p className="mt-3 leading-7 text-slate-600">确认返回主页吗？</p><div className="mt-6 flex gap-3"><button type="button" onClick={() => setShowLeaveDialog(false)} className="flex-1 rounded-xl border border-slate-200 px-4 py-3 text-sm font-semibold text-slate-600">继续学习</button><button type="button" onClick={() => router.push("/")} className="flex-1 rounded-xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white">确认离开</button></div></div></div>}
+        {testComplete && <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/45 px-5"><div role="dialog" aria-modal="true" aria-label="测试完成" className="w-full max-w-md rounded-3xl bg-white p-8 text-center shadow-2xl"><h2 className="text-2xl font-bold text-indigo-700">{selectedDay === "today" ? "恭喜完成今日任务！" : `恭喜完成第${selectedDay}天测试！`}</h2><p className="mt-4 text-slate-600">本次词表的 {entries.length} 个单词已全部掌握。</p>{saveError && <p role="alert" className="mt-3 text-sm text-rose-600">保存失败：{saveError}</p>}<button type="button" disabled={completionSaving} onClick={() => router.push("/")} className="mt-7 rounded-xl bg-indigo-600 px-6 py-3 font-semibold text-white disabled:opacity-50">{completionSaving ? "正在保存…" : "返回主页"}</button></div></div>}
       </div>
     </main>
   );
