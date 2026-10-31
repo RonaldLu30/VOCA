@@ -1,4 +1,5 @@
 import type { ReviewStatus, StudyRecord } from "./domain";
+import { getStudyDate } from "./study-date";
 
 export interface ReviewSummary {
   total: number;
@@ -64,18 +65,24 @@ export function getReviewQueue(records: StudyRecord[]): StudyRecord[] {
     .sort((a, b) => a.answeredAt.localeCompare(b.answeredAt));
 }
 
-export function isDailyTestComplete(records: StudyRecord[], vocabularyIds: string[], studyDate: string): boolean {
-  const completedIds = new Set(
-    records
-      .filter((record) => record.correct && record.answeredAt.slice(0, 10) === studyDate)
-      .map((record) => record.vocabularyId),
-  );
-  return vocabularyIds.length > 0 && vocabularyIds.every((id) => completedIds.has(id));
+export function isDailyTestComplete(records: Pick<StudyRecord, "vocabularyId" | "correct" | "consecutiveCorrect" | "answeredAt">[], vocabularyIds: string[], studyDate: string): boolean {
+  const todayRecords = records.filter((record) => getStudyDate(new Date(record.answeredAt)) === studyDate);
+  const latest = new Map<string, (typeof todayRecords)[number]>();
+  const missed = new Set<string>();
+  for (const record of todayRecords) {
+    if (!record.correct) missed.add(record.vocabularyId);
+    const previous = latest.get(record.vocabularyId);
+    if (!previous || previous.answeredAt <= record.answeredAt) latest.set(record.vocabularyId, record);
+  }
+  return vocabularyIds.length > 0 && vocabularyIds.every((id) => {
+    const record = latest.get(id);
+    return record?.correct && (!missed.has(id) || record.consecutiveCorrect >= 3);
+  });
 }
 
 export function summarizeReviews(records: StudyRecord[], vocabularyIds: string[], studyDate: string): ReviewSummary {
   const latest = getLatestRecords(records);
-  const answered = records.filter((record) => record.answeredAt.slice(0, 10) === studyDate);
+  const answered = records.filter((record) => getStudyDate(new Date(record.answeredAt)) === studyDate);
   const correct = answered.filter((record) => record.correct).length;
   return {
     total: vocabularyIds.length,

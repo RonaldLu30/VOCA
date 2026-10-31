@@ -7,12 +7,13 @@ import { parseVocabularyCsv, parseVocabularyText, VocabularyEntry } from "@/lib/
 import { extractPdfText } from "@/lib/pdf-vocabulary";
 import { detectDayNumber, nextDayNumber } from "@/lib/study-day";
 import { createClient } from "@/lib/supabase/client";
-import { calculateStreak } from "@/lib/review";
+import { calculateStreak, isDailyTestComplete } from "@/lib/review";
+import { getStudyDate, getStudyDayBounds } from "@/lib/study-date";
 
 const supabase = createClient();
 const sample = "abandon\t放弃；遗弃\naccurate\t准确的\ntake advantage of\t利用";
 const pendingImportKey = "voca.pendingImport";
-const today = new Date().toISOString().slice(0, 10);
+const today = getStudyDate();
 type StoredEntry = VocabularyEntry & { list_id: string };
 type StoredList = { id: string; day_number: number; created_at: string };
 type ImportPreview = { value: string; name: string; entries: VocabularyEntry[] };
@@ -79,14 +80,47 @@ export default function Home() {
         supabase.from("profiles").select("username").eq("id", authUser.id).single(),
         supabase.from("vocabulary_entries").select("id, term, meaning, synonyms, phonetic, list_id").eq("user_id", authUser.id).order("created_at", { ascending: false }),
         supabase.from("vocabulary_lists").select("id, day_number, created_at").eq("user_id", authUser.id).order("created_at", { ascending: false }),
-        supabase.from("study_days").select("study_date, energy_awarded").eq("user_id", authUser.id),
+        supabase.from("study_days").select("study_date, energy_awarded, created_at").eq("user_id", authUser.id),
       ]);
       if (!active) return;
       setUser({ id: authUser.id, username: profile.data?.username ?? authUser.email ?? "用户" });
       setEntries(words.data ?? []);
       setLists(savedLists.data ?? []);
-      setEnergy((days.data ?? []).reduce((sum, day) => sum + day.energy_awarded, 0));
-      setCompletedDates((days.data ?? []).map((day) => day.study_date));
+      let studyDays = days.data ?? [];
+      if (days.error) setStatus(`能量读取失败：${days.error.message}`);
+      if (!days.error && !studyDays.some((day) => day.study_date === today || getStudyDate(new Date(day.created_at)) === today)) {
+        const currentDay = savedLists.data?.[0]?.day_number;
+        const listIds = new Set((savedLists.data ?? []).filter((list) => list.day_number === currentDay).map((list) => list.id));
+        const wordIds = (words.data ?? [])
+          .filter((word) => listIds.has(word.list_id) && parseVocabularyText(`${word.term}\t${word.meaning}`).length > 0)
+          .map((word) => word.id);
+        if (wordIds.length) {
+          const { start, end } = getStudyDayBounds();
+          const { data: answers, error: answersError } = await supabase.from("study_records")
+            .select("vocabulary_id, correct, consecutive_correct, answered_at")
+            .eq("user_id", authUser.id).in("vocabulary_id", wordIds)
+            .gte("answered_at", start).lt("answered_at", end);
+          if (!active) return;
+          const records = (answers ?? []).map((record) => ({
+            vocabularyId: record.vocabulary_id, correct: record.correct,
+            consecutiveCorrect: record.consecutive_correct, answeredAt: record.answered_at,
+          }));
+          if (!answersError && isDailyTestComplete(records, wordIds, today)) {
+            const { error: awardError } = await supabase.from("study_days")
+              .upsert({ user_id: authUser.id, study_date: today }, { onConflict: "user_id,study_date", ignoreDuplicates: true });
+            if (!active) return;
+            if (awardError) setStatus(`今日能量补发失败：${awardError.message}`);
+            else {
+              const refreshed = await supabase.from("study_days").select("study_date, energy_awarded, created_at").eq("user_id", authUser.id);
+              if (!active) return;
+              if (refreshed.error) setStatus(`能量刷新失败：${refreshed.error.message}`);
+              else studyDays = refreshed.data ?? [];
+            }
+          }
+        }
+      }
+      setEnergy(studyDays.reduce((sum, day) => sum + day.energy_awarded, 0));
+      setCompletedDates(studyDays.map((day) => getStudyDate(new Date(day.created_at)) === today ? today : day.study_date));
       const pending = window.sessionStorage.getItem(pendingImportKey);
       if (pending) {
         window.sessionStorage.removeItem(pendingImportKey);

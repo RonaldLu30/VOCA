@@ -7,6 +7,7 @@ import { matchesAnswer } from "@/lib/answer-matcher";
 import { VocabularyEntry } from "@/lib/domain";
 import { createClient } from "@/lib/supabase/client";
 import { isVocabularyTerm, parseVocabularyText } from "@/lib/vocabulary-parser";
+import { getStudyDate } from "@/lib/study-date";
 
 const supabase = createClient();
 
@@ -227,7 +228,7 @@ export function LearningWorkspace({ initialMode }: { initialMode: "memory" | "te
         });
         if (error) setSaveError(error.message);
         if (completed && selectedDay === "today" && !error) {
-          const studyDate = new Date().toISOString().slice(0, 10);
+          const studyDate = getStudyDate();
           const { error: dayError } = await supabase.from("study_days")
             .upsert({ user_id: userId, study_date: studyDate }, { onConflict: "user_id,study_date", ignoreDuplicates: true });
           if (dayError) setSaveError(`今日打卡保存失败：${dayError.message}`);

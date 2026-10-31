@@ -26,6 +26,8 @@ In test mode, answer matching ignores letter case, spaces, apostrophes, and hyph
 
 The importer keeps phonetic transcriptions from a phonetic column or inline `/.../` and `[...]` notation. Previously imported words without stored phonetics can be filled in from the library's phonetic column.
 
+Daily check-ins use the China calendar date. When the home page opens, it restores a missing 20-energy check-in if today's latest vocabulary list has complete, correct test records; an existing check-in is never awarded twice.
+
 You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.

@@ -5,10 +5,11 @@ import Link from "next/link";
 import type { StudyRecord } from "@/lib/domain";
 import { calculateStreak, getReviewQueue, summarizeReviews } from "@/lib/review";
 import { createClient } from "@/lib/supabase/client";
+import { getStudyDate } from "@/lib/study-date";
 
 const supabase = createClient();
 
-const today = new Date().toISOString().slice(0, 10);
+const today = getStudyDate();
 export function ReviewPanel() {
   const [records, setRecords] = useState<StudyRecord[]>([]);
   const [completedDates, setCompletedDates] = useState<string[]>([]);
@@ -28,7 +29,7 @@ export function ReviewPanel() {
       const [words, answers, days] = await Promise.all([
         supabase.from("vocabulary_entries").select("id, term").eq("user_id", user.id),
         supabase.from("study_records").select("id, vocabulary_id, answer, correct, consecutive_correct, status, answered_at").eq("user_id", user.id).order("answered_at", { ascending: true }),
-        supabase.from("study_days").select("study_date").eq("user_id", user.id),
+        supabase.from("study_days").select("study_date, created_at").eq("user_id", user.id),
       ]);
       if (!active) return;
       setVocabulary(Object.fromEntries((words.data ?? []).map((word) => [word.id, word.term])));
@@ -37,7 +38,7 @@ export function ReviewPanel() {
         correct: record.correct, consecutiveCorrect: record.consecutive_correct, status: record.status,
         answeredAt: record.answered_at,
       })));
-      setCompletedDates((days.data ?? []).map((day) => day.study_date));
+      setCompletedDates((days.data ?? []).map((day) => getStudyDate(new Date(day.created_at)) === today ? today : day.study_date));
     }
     void load();
     return () => { active = false; };
